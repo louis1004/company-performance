@@ -545,21 +545,15 @@ const indexHtml = `<!DOCTYPE html>
         if (data.length < 1) return '';
         let path = 'M';
         let circles = '';
-        let labels = '';
         
         data.forEach((d, i) => {
           const x = qoqData.length === 1 ? padding.left + chartWidth / 2 : xScale(i);
           const y = yScale(getValue(d));
           path += (i === 0 ? '' : ' L') + x + ',' + y;
           circles += '<circle cx="' + x + '" cy="' + y + '" r="5" fill="' + color + '" stroke="white" stroke-width="2"/>';
-          
-          const val = getValue(d).toFixed(1);
-          const sign = val >= 0 ? '+' : '';
-          const valClass = val >= 0 ? 'positive' : 'negative';
-          labels += '<text x="' + x + '" y="' + (y - 10) + '" class="qoq-value ' + valClass + '" text-anchor="middle">' + sign + val + '%</text>';
         });
         
-        return '<path d="' + path + '" fill="none" stroke="' + color + '" stroke-width="2.5"/>' + circles + labels;
+        return '<path d="' + path + '" fill="none" stroke="' + color + '" stroke-width="2.5"/>' + circles;
       }
       
       // 세 개의 선 그리기

@@ -260,21 +260,38 @@ export class DARTClient {
   }
 
   async getDisclosures(corpCode: string, limit: number = 5): Promise<Disclosure[]> {
-    return withRetry(async () => {
-      const response = await this.request<DARTResponse<any>>('/list.json', {
-        corp_code: corpCode,
-        page_count: String(limit)
-      });
-      
-      if (!response.list) return [];
-
-      return response.list.slice(0, limit).map((item: any) => ({
-        reportNm: item.report_nm,
-        rcept_no: item.rcept_no,
-        rcept_dt: item.rcept_dt,
-        flr_nm: item.flr_nm
-      }));
+    // 정기 공시만 필터링 (pblntf_ty=A), 최근 2년간
+    const twoYearsAgo = new Date();
+    twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+    const bgn_de = twoYearsAgo.toISOString().slice(0, 10).replace(/-/g, '');
+    
+    const url = new URL(`${this.baseUrl}/list.json`);
+    url.searchParams.set('crtfc_key', this.apiKey);
+    url.searchParams.set('corp_code', corpCode);
+    url.searchParams.set('pblntf_ty', 'A');
+    url.searchParams.set('bgn_de', bgn_de);
+    url.searchParams.set('page_count', String(limit));
+    
+    const response = await fetch(url.toString(), {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json'
+      }
     });
+    
+    if (!response.ok) return [];
+    
+    const data = await response.json() as any;
+    
+    // status가 000이 아니면 빈 배열 반환 (013: 조회된 데이터 없음)
+    if (data.status !== '000' || !data.list) return [];
+
+    return data.list.slice(0, limit).map((item: any) => ({
+      reportNm: item.report_nm,
+      rcept_no: item.rcept_no,
+      rcept_dt: item.rcept_dt,
+      flr_nm: item.flr_nm
+    }));
   }
 
   async getFinancialDetails(
