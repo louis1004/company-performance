@@ -145,6 +145,37 @@ const indexHtml = `<!DOCTYPE html>
     }
     .legend-item { display: flex; align-items: center; gap: 6px; }
     .legend-dot { width: 12px; height: 12px; border-radius: 3px; }
+    .qoq-chart-container { padding: 10px 0; }
+    #qoqChart { display: block; margin: 0 auto; }
+    .qoq-label { font-size: 11px; fill: #666; }
+    .qoq-value { font-size: 10px; font-weight: 600; }
+    .qoq-value.positive { fill: #e53e3e; }
+    .qoq-value.negative { fill: #3182ce; }
+    .qoq-table-container { margin-top: 20px; overflow-x: auto; }
+    .qoq-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+    .qoq-table th, .qoq-table td {
+      padding: 10px 8px;
+      text-align: center;
+      border-bottom: 1px solid #e1e5eb;
+    }
+    .qoq-table th {
+      background: #f5f7fa;
+      font-weight: 600;
+      color: #555;
+    }
+    .qoq-table th:first-child, .qoq-table td:first-child {
+      text-align: left;
+      font-weight: 500;
+    }
+    .qoq-table .positive { color: #e53e3e; }
+    .qoq-table .negative { color: #3182ce; }
+    .qoq-table .metric-revenue { border-left: 3px solid #667eea; }
+    .qoq-table .metric-op { border-left: 3px solid #48bb78; }
+    .qoq-table .metric-net { border-left: 3px solid #ed8936; }
     .ratios-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
@@ -223,6 +254,8 @@ const indexHtml = `<!DOCTYPE html>
       .ratios-grid { grid-template-columns: repeat(2, 1fr); }
       .chart-bar { width: 10px; }
       .chart-label { font-size: 0.65rem; }
+      .qoq-table { font-size: 0.75rem; }
+      .qoq-table th, .qoq-table td { padding: 6px 4px; }
     }
   </style>
 </head>
@@ -258,6 +291,18 @@ const indexHtml = `<!DOCTYPE html>
         </div>
       </div>
       <div class="card" style="margin-bottom: 20px;">
+        <div class="card-title">📉 전분기 대비 성장률 (QoQ)</div>
+        <div class="qoq-chart-container">
+          <svg id="qoqChart" width="100%" height="200" viewBox="0 0 600 200"></svg>
+          <div class="chart-legend">
+            <div class="legend-item"><div class="legend-dot" style="background: #667eea;"></div>매출액</div>
+            <div class="legend-item"><div class="legend-dot" style="background: #48bb78;"></div>영업이익</div>
+            <div class="legend-item"><div class="legend-dot" style="background: #ed8936;"></div>당기순이익</div>
+          </div>
+        </div>
+        <div class="qoq-table-container" id="qoqTableContainer"></div>
+      </div>
+      <div class="card" style="margin-bottom: 20px;">
         <div class="card-title">📊 주요 재무비율</div>
         <div class="ratios-grid" id="ratiosGrid">
           <div class="ratio-item"><div class="ratio-value" id="ratioEPS">-</div><div class="ratio-label">EPS</div></div>
@@ -265,7 +310,6 @@ const indexHtml = `<!DOCTYPE html>
           <div class="ratio-item"><div class="ratio-value" id="ratioPBR">-</div><div class="ratio-label">PBR</div></div>
           <div class="ratio-item"><div class="ratio-value" id="ratioROA">-</div><div class="ratio-label">ROA</div></div>
           <div class="ratio-item"><div class="ratio-value" id="ratioROE">-</div><div class="ratio-label">ROE</div></div>
-          <div class="ratio-item"><div class="ratio-value" id="ratioEVEBITDA">-</div><div class="ratio-label">EV/EBITDA</div></div>
         </div>
       </div>
       <div class="grid grid-2">
@@ -438,10 +482,148 @@ const indexHtml = `<!DOCTYPE html>
           '<div class="chart-label">' + d.quarter + '</div>' +
           '</div>';
       }).join('');
+      
+      // QoQ 성장률 차트 렌더링
+      renderQoQChart(chartData);
+    }
+
+    function renderQoQChart(chartData) {
+      const svg = document.getElementById('qoqChart');
+      const tableContainer = document.getElementById('qoqTableContainer');
+      if (!svg || chartData.length < 2) {
+        if (tableContainer) tableContainer.innerHTML = '';
+        return;
+      }
+      
+      // QoQ 계산 (첫 번째 분기는 비교 대상 없음)
+      const qoqData = [];
+      for (let i = 1; i < chartData.length; i++) {
+        const prev = chartData[i - 1];
+        const curr = chartData[i];
+        qoqData.push({
+          quarter: curr.quarter,
+          revenueQoQ: prev.revenue !== 0 ? ((curr.revenue - prev.revenue) / Math.abs(prev.revenue)) * 100 : 0,
+          opQoQ: prev.operatingProfit !== 0 ? ((curr.operatingProfit - prev.operatingProfit) / Math.abs(prev.operatingProfit)) * 100 : 0,
+          netQoQ: prev.netIncome !== 0 ? ((curr.netIncome - prev.netIncome) / Math.abs(prev.netIncome)) * 100 : 0
+        });
+      }
+      
+      if (qoqData.length === 0) return;
+      
+      const width = 600;
+      const height = 200;
+      const padding = { top: 30, right: 40, bottom: 40, left: 50 };
+      const chartWidth = width - padding.left - padding.right;
+      const chartHeight = height - padding.top - padding.bottom;
+      
+      // Y축 범위 계산
+      const allQoQ = qoqData.flatMap(d => [d.revenueQoQ, d.opQoQ, d.netQoQ]);
+      const maxQoQ = Math.max(...allQoQ, 10);
+      const minQoQ = Math.min(...allQoQ, -10);
+      const yRange = Math.max(Math.abs(maxQoQ), Math.abs(minQoQ)) * 1.2;
+      
+      // X, Y 좌표 계산 함수
+      const xScale = (i) => padding.left + (i / (qoqData.length - 1 || 1)) * chartWidth;
+      const yScale = (v) => padding.top + chartHeight / 2 - (v / yRange) * (chartHeight / 2);
+      
+      // SVG 내용 생성
+      let svgContent = '';
+      
+      // 0% 기준선
+      const zeroY = yScale(0);
+      svgContent += '<line x1="' + padding.left + '" y1="' + zeroY + '" x2="' + (width - padding.right) + '" y2="' + zeroY + '" stroke="#ccc" stroke-dasharray="4"/>';
+      
+      // Y축 레이블
+      const yTicks = [-Math.round(yRange), -Math.round(yRange/2), 0, Math.round(yRange/2), Math.round(yRange)];
+      yTicks.forEach(tick => {
+        const y = yScale(tick);
+        svgContent += '<text x="' + (padding.left - 10) + '" y="' + (y + 4) + '" class="qoq-label" text-anchor="end">' + tick + '%</text>';
+      });
+      
+      // 선 그리기 함수
+      function drawLine(data, getValue, color) {
+        if (data.length < 1) return '';
+        let path = 'M';
+        let circles = '';
+        let labels = '';
+        
+        data.forEach((d, i) => {
+          const x = qoqData.length === 1 ? padding.left + chartWidth / 2 : xScale(i);
+          const y = yScale(getValue(d));
+          path += (i === 0 ? '' : ' L') + x + ',' + y;
+          circles += '<circle cx="' + x + '" cy="' + y + '" r="5" fill="' + color + '" stroke="white" stroke-width="2"/>';
+          
+          const val = getValue(d).toFixed(1);
+          const sign = val >= 0 ? '+' : '';
+          const valClass = val >= 0 ? 'positive' : 'negative';
+          labels += '<text x="' + x + '" y="' + (y - 10) + '" class="qoq-value ' + valClass + '" text-anchor="middle">' + sign + val + '%</text>';
+        });
+        
+        return '<path d="' + path + '" fill="none" stroke="' + color + '" stroke-width="2.5"/>' + circles + labels;
+      }
+      
+      // 세 개의 선 그리기
+      svgContent += drawLine(qoqData, d => d.revenueQoQ, '#667eea');
+      svgContent += drawLine(qoqData, d => d.opQoQ, '#48bb78');
+      svgContent += drawLine(qoqData, d => d.netQoQ, '#ed8936');
+      
+      // X축 레이블
+      qoqData.forEach((d, i) => {
+        const x = qoqData.length === 1 ? padding.left + chartWidth / 2 : xScale(i);
+        svgContent += '<text x="' + x + '" y="' + (height - 10) + '" class="qoq-label" text-anchor="middle">' + d.quarter + '</text>';
+      });
+      
+      svg.innerHTML = svgContent;
+      
+      // QoQ 테이블 렌더링
+      renderQoQTable(chartData, qoqData, tableContainer);
+    }
+    
+    function renderQoQTable(chartData, qoqData, container) {
+      if (!container) return;
+      
+      // 테이블 헤더 (분기)
+      let headerHtml = '<th>지표</th>';
+      chartData.forEach(d => {
+        headerHtml += '<th>' + d.quarter + '</th>';
+      });
+      
+      // 매출액 행
+      let revenueRow = '<td class="metric-revenue">매출액</td>';
+      chartData.forEach((d, i) => {
+        const value = formatKoreanCurrency(d.revenue);
+        const qoq = i > 0 ? qoqData[i - 1].revenueQoQ : null;
+        const qoqStr = qoq !== null ? '<br><span class="' + (qoq >= 0 ? 'positive' : 'negative') + '">(' + (qoq >= 0 ? '+' : '') + qoq.toFixed(1) + '%)</span>' : '';
+        revenueRow += '<td>' + value + qoqStr + '</td>';
+      });
+      
+      // 영업이익 행
+      let opRow = '<td class="metric-op">영업이익</td>';
+      chartData.forEach((d, i) => {
+        const value = formatKoreanCurrency(d.operatingProfit);
+        const qoq = i > 0 ? qoqData[i - 1].opQoQ : null;
+        const qoqStr = qoq !== null ? '<br><span class="' + (qoq >= 0 ? 'positive' : 'negative') + '">(' + (qoq >= 0 ? '+' : '') + qoq.toFixed(1) + '%)</span>' : '';
+        opRow += '<td>' + value + qoqStr + '</td>';
+      });
+      
+      // 당기순이익 행
+      let netRow = '<td class="metric-net">당기순이익</td>';
+      chartData.forEach((d, i) => {
+        const value = formatKoreanCurrency(d.netIncome);
+        const qoq = i > 0 ? qoqData[i - 1].netQoQ : null;
+        const qoqStr = qoq !== null ? '<br><span class="' + (qoq >= 0 ? 'positive' : 'negative') + '">(' + (qoq >= 0 ? '+' : '') + qoq.toFixed(1) + '%)</span>' : '';
+        netRow += '<td>' + value + qoqStr + '</td>';
+      });
+      
+      container.innerHTML = '<table class="qoq-table"><thead><tr>' + headerHtml + '</tr></thead><tbody>' +
+        '<tr>' + revenueRow + '</tr>' +
+        '<tr>' + opRow + '</tr>' +
+        '<tr>' + netRow + '</tr>' +
+        '</tbody></table>';
     }
 
     async function loadRatios(corpCode) {
-      ['ratioEPS', 'ratioPER', 'ratioPBR', 'ratioROA', 'ratioROE', 'ratioEVEBITDA'].forEach(id => document.getElementById(id).textContent = '-');
+      ['ratioEPS', 'ratioPER', 'ratioPBR', 'ratioROA', 'ratioROE'].forEach(id => document.getElementById(id).textContent = '-');
       try {
         const res = await fetch(API_BASE + '/companies/' + corpCode + '/ratios');
         const data = await res.json();
@@ -451,7 +633,6 @@ const indexHtml = `<!DOCTYPE html>
           document.getElementById('ratioPBR').textContent = data.ratios.pbr ? data.ratios.pbr.toFixed(2) + '배' : '-';
           document.getElementById('ratioROA').textContent = data.ratios.roa ? data.ratios.roa.toFixed(2) + '%' : '-';
           document.getElementById('ratioROE').textContent = data.ratios.roe ? data.ratios.roe.toFixed(2) + '%' : '-';
-          document.getElementById('ratioEVEBITDA').textContent = data.ratios.evEbitda ? data.ratios.evEbitda.toFixed(2) + '배' : '-';
         }
       } catch (err) {
         console.error('Ratios error:', err);

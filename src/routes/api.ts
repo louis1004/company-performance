@@ -100,44 +100,57 @@ api.get('/companies/:corpCode/financial', async (c) => {
       return c.json(cached);
     }
 
-    const quarters = getLast6Quarters();
+    // 최근 6개 분기 + 누적값 계산을 위한 추가 분기 데이터 필요
+    // 예: 2024-Q3 단독값 = 2024-Q3 누적 - 2024-Q2 누적
+    // 따라서 2024-Q1, Q2 데이터도 필요
+    const currentYear = new Date().getFullYear();
     const statements = [];
     
     const reportCodes: Record<string, string> = {
       'Q1': '11013', 'Q2': '11012', 'Q3': '11014', 'Q4': '11011'
     };
     
-    for (const quarter of quarters) {
-      try {
-        const data = await dartClient.getFinancialStatements(
-          corpCode,
-          quarter.year,
-          reportCodes[quarter.quarter]
-        );
-        if (data.length > 0) {
-          statements.push(...data);
+    // 최근 3년간 모든 분기 데이터 가져오기 (누적값 계산용)
+    const yearsToFetch = [currentYear - 2, currentYear - 1, currentYear];
+    const quartersToFetch = ['Q1', 'Q2', 'Q3', 'Q4'];
+    
+    for (const year of yearsToFetch) {
+      for (const quarter of quartersToFetch) {
+        try {
+          const data = await dartClient.getFinancialStatements(
+            corpCode,
+            year.toString(),
+            reportCodes[quarter]
+          );
+          if (data.length > 0) {
+            statements.push(...data);
+          }
+        } catch (e) {
+          // Skip failed quarters
         }
-      } catch (e) {
-        // Skip failed quarters
       }
     }
     
     const processed = processFinancialData(statements);
     const qoqData = calculateQoQChanges(processed);
     
-    const chartData = qoqData.quarters.map((q, i) => ({
+    // 최근 6개 분기만 반환
+    const maxQuarters = 6;
+    const startIdx = Math.max(0, qoqData.quarters.length - maxQuarters);
+    
+    const chartData = qoqData.quarters.slice(startIdx).map((q, i) => ({
       quarter: `${q.year}-${q.quarter}`,
-      revenue: qoqData.revenue[i]?.value || 0,
-      operatingProfit: qoqData.operatingProfit[i]?.value || 0,
-      netIncome: qoqData.netIncome[i]?.value || 0
+      revenue: qoqData.revenue[startIdx + i]?.value || 0,
+      operatingProfit: qoqData.operatingProfit[startIdx + i]?.value || 0,
+      netIncome: qoqData.netIncome[startIdx + i]?.value || 0
     }));
     
     const response = {
-      quarters: qoqData.quarters,
+      quarters: qoqData.quarters.slice(startIdx),
       metrics: {
-        revenue: qoqData.revenue,
-        operatingProfit: qoqData.operatingProfit,
-        netIncome: qoqData.netIncome
+        revenue: qoqData.revenue.slice(startIdx),
+        operatingProfit: qoqData.operatingProfit.slice(startIdx),
+        netIncome: qoqData.netIncome.slice(startIdx)
       },
       chartData
     };

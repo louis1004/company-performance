@@ -199,40 +199,62 @@ export class DARTClient {
     reportCode: string = '11013'
   ): Promise<FinancialStatement[]> {
     return withRetry(async () => {
+      // 요약 재무정보 API 사용 (fnlttSinglAcnt) - 누적값 제공
       const response = await this.request<DARTResponse<any>>(
-        '/fnlttSinglAcntAll.json',
+        '/fnlttSinglAcnt.json',
         {
           corp_code: corpCode,
           bsns_year: year,
-          reprt_code: reportCode,
-          fs_div: 'CFS'
+          reprt_code: reportCode
         }
       );
       
-      if (!response.list) return [];
+      if (!response.list || response.list.length === 0) return [];
+
+      // 연결재무제표(CFS)만 필터링
+      const cfsList = response.list.filter((item: any) => item.fs_div === 'CFS');
+      if (cfsList.length === 0) return [];
+
+      // 응답 데이터의 실제 연도 확인
+      const firstItem = cfsList[0];
+      if (firstItem.bsns_year && firstItem.bsns_year !== year) {
+        return [];
+      }
 
       const quarterMap: Record<string, 'Q1' | 'Q2' | 'Q3' | 'Q4'> = {
         '11013': 'Q1', '11012': 'Q2', '11014': 'Q3', '11011': 'Q4'
       };
       
-      const revenue = response.list.find(
-        (item: any) => item.account_nm === '매출액' || item.account_nm === '수익(매출액)'
+      // 손익계산서 항목 찾기
+      const revenueItem = cfsList.find(
+        (item: any) => item.sj_div === 'IS' && item.account_nm === '매출액'
       );
-      const operatingProfit = response.list.find(
-        (item: any) => item.account_nm === '영업이익' || item.account_nm === '영업이익(손실)'
+      const operatingProfitItem = cfsList.find(
+        (item: any) => item.sj_div === 'IS' && item.account_nm === '영업이익'
       );
-      const netIncome = response.list.find(
-        (item: any) => item.account_nm === '당기순이익' || 
-                       item.account_nm === '당기순이익(손실)' ||
-                       item.account_nm.includes('지배기업')
+      const netIncomeItem = cfsList.find(
+        (item: any) => item.sj_div === 'IS' && 
+          (item.account_nm === '당기순이익(손실)' || item.account_nm === '당기순이익')
       );
+      
+      // Q1은 thstrm_amount 사용, Q2/Q3/Q4는 thstrm_add_amount(누적) 사용
+      const isQ1 = reportCode === '11013';
+      
+      const getAmount = (item: any) => {
+        if (!item) return 0;
+        if (isQ1) {
+          return this.parseAmount(item.thstrm_amount);
+        }
+        // Q2, Q3, Q4는 누적값(thstrm_add_amount) 사용
+        return this.parseAmount(item.thstrm_add_amount || item.thstrm_amount);
+      };
       
       return [{
         year,
         quarter: quarterMap[reportCode] || 'Q4',
-        revenue: this.parseAmount(revenue?.thstrm_amount),
-        operatingProfit: this.parseAmount(operatingProfit?.thstrm_amount),
-        netIncome: this.parseAmount(netIncome?.thstrm_amount)
+        revenue: getAmount(revenueItem),
+        operatingProfit: getAmount(operatingProfitItem),
+        netIncome: getAmount(netIncomeItem)
       }];
     });
   }

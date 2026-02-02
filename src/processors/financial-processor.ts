@@ -79,6 +79,18 @@ function createQuarterPeriod(year: number, quarter: 1|2|3|4): QuarterPeriod {
 
 /**
  * Process raw financial data into structured format
+ * 
+ * DART API 요약재무정보(fnlttSinglAcnt) 반환값 구조:
+ * - 11013 (1분기): Q1 단독 (1~3월) - thstrm_amount
+ * - 11012 (반기): 1~6월 누적 - thstrm_add_amount
+ * - 11014 (3분기): 1~9월 누적 - thstrm_add_amount
+ * - 11011 (사업): 1~12월 연간 - thstrm_amount
+ * 
+ * 분기별 단독 값 계산:
+ * - Q1 = 1분기 보고서 값
+ * - Q2 = 반기 누적 - Q1 (Q1 데이터 필요)
+ * - Q3 = 3분기 누적 - 반기 누적 (Q2 누적 데이터 필요)
+ * - Q4 = 연간 - 3분기 누적 (Q3 누적 데이터 필요)
  */
 export function processFinancialData(
   statements: FinancialStatement[]
@@ -92,16 +104,98 @@ export function processFinancialData(
     return quarterOrder[a.quarter] - quarterOrder[b.quarter];
   });
   
-  const quarters: QuarterPeriod[] = sorted.map(s => 
+  // Group by year
+  const byYear: Record<string, FinancialStatement[]> = {};
+  sorted.forEach(s => {
+    if (!byYear[s.year]) byYear[s.year] = [];
+    byYear[s.year].push(s);
+  });
+  
+  // Calculate quarterly standalone values from cumulative
+  const quarterlyData: FinancialStatement[] = [];
+  
+  Object.keys(byYear).sort().forEach(year => {
+    const yearData = byYear[year];
+    
+    // Find each quarter's cumulative data
+    const q1 = yearData.find(d => d.quarter === 'Q1'); // Q1 단독
+    const q2Cum = yearData.find(d => d.quarter === 'Q2'); // 반기 누적 (Q1+Q2)
+    const q3Cum = yearData.find(d => d.quarter === 'Q3'); // 3분기 누적 (Q1+Q2+Q3)
+    const q4Annual = yearData.find(d => d.quarter === 'Q4'); // 연간 (Q1+Q2+Q3+Q4)
+    
+    // Q1: 단독 값 그대로 사용
+    if (q1 && q1.revenue > 0) {
+      quarterlyData.push({
+        year,
+        quarter: 'Q1',
+        revenue: q1.revenue,
+        operatingProfit: q1.operatingProfit,
+        netIncome: q1.netIncome
+      });
+    }
+    
+    // Q2: 반기 누적 - Q1 (Q1 데이터가 있어야만 계산 가능)
+    if (q2Cum && q2Cum.revenue > 0 && q1) {
+      const q2Revenue = q2Cum.revenue - q1.revenue;
+      const q2Op = q2Cum.operatingProfit - q1.operatingProfit;
+      const q2Net = q2Cum.netIncome - q1.netIncome;
+      
+      if (q2Revenue > 0) {
+        quarterlyData.push({
+          year,
+          quarter: 'Q2',
+          revenue: q2Revenue,
+          operatingProfit: q2Op,
+          netIncome: q2Net
+        });
+      }
+    }
+    
+    // Q3: 3분기 누적 - 반기 누적 (Q2 누적 데이터가 있어야만 계산 가능)
+    if (q3Cum && q3Cum.revenue > 0 && q2Cum) {
+      const q3Revenue = q3Cum.revenue - q2Cum.revenue;
+      const q3Op = q3Cum.operatingProfit - q2Cum.operatingProfit;
+      const q3Net = q3Cum.netIncome - q2Cum.netIncome;
+      
+      if (q3Revenue > 0) {
+        quarterlyData.push({
+          year,
+          quarter: 'Q3',
+          revenue: q3Revenue,
+          operatingProfit: q3Op,
+          netIncome: q3Net
+        });
+      }
+    }
+    
+    // Q4: 연간 - 3분기 누적 (Q3 누적 데이터가 있어야만 계산 가능)
+    if (q4Annual && q4Annual.revenue > 0 && q3Cum) {
+      const q4Revenue = q4Annual.revenue - q3Cum.revenue;
+      const q4Op = q4Annual.operatingProfit - q3Cum.operatingProfit;
+      const q4Net = q4Annual.netIncome - q3Cum.netIncome;
+      
+      if (q4Revenue > 0) {
+        quarterlyData.push({
+          year,
+          quarter: 'Q4',
+          revenue: q4Revenue,
+          operatingProfit: q4Op,
+          netIncome: q4Net
+        });
+      }
+    }
+  });
+  
+  const quarters: QuarterPeriod[] = quarterlyData.map(s => 
     createQuarterPeriod(parseInt(s.year), 
       ({ Q1: 1, Q2: 2, Q3: 3, Q4: 4 } as const)[s.quarter])
   );
 
   return {
     quarters,
-    revenue: sorted.map(s => s.revenue),
-    operatingProfit: sorted.map(s => s.operatingProfit),
-    netIncome: sorted.map(s => s.netIncome)
+    revenue: quarterlyData.map(s => s.revenue),
+    operatingProfit: quarterlyData.map(s => s.operatingProfit),
+    netIncome: quarterlyData.map(s => s.netIncome)
   };
 }
 
