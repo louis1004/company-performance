@@ -490,9 +490,15 @@ app.use('/api/*', async (c, next) => {
       let companies = await cache.get<any[]>(CACHE_KEYS.COMPANY_LIST);
       
       if (!companies) {
-        const dartClient = createDARTClient(c.env.DART_API_KEY);
-        companies = await dartClient.getCompanyList();
-        await cache.set(CACHE_KEYS.COMPANY_LIST, companies, CACHE_TTL.COMPANY_LIST);
+        // 회사 목록은 KV에 미리 저장되어 있음 (company_list 키)
+        const kvCompanies = await c.env.COMPANY_CACHE.get('company_list', 'json');
+        
+        if (kvCompanies) {
+          companies = kvCompanies as any[];
+          await cache.set(CACHE_KEYS.COMPANY_LIST, companies, CACHE_TTL.COMPANY_LIST);
+        } else {
+          companies = [];
+        }
       }
       
       searchService.initializeIndex(companies);

@@ -1,17 +1,16 @@
 name = "company-performance"
 main = "src/index.ts"
-compatibility_date = "2024-01-01"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
 
-# Environment variables (use wrangler secret for production)
-[vars]
-DART_API_KEY = "xxxx"
+# Environment variables - use wrangler secret for production
+# [vars]
+# DART_API_KEY = "xxxx"
 
 # KV Namespace binding
-# Create with: wrangler kv:namespace create "COMPANY_CACHE"
-# Then uncomment and add the ID:
-# [[kv_namespaces]]
-# binding = "COMPANY_CACHE"
-# id = "your-kv-namespace-id"
+[[kv_namespaces]]
+binding = "COMPANY_CACHE"
+id = "0511a25f3b344bd8b76a85a135ede572"
 
 # Build configuration
 [build]

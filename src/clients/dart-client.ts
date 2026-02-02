@@ -12,8 +12,8 @@ import type {
   Disclosure, 
   FinancialDetails 
 } from '../types';
-import AdmZip from 'adm-zip';
-import { parseStringPromise } from 'xml2js';
+import { unzipSync } from 'fflate';
+import { XMLParser } from 'fast-xml-parser';
 
 const DART_BASE_URL = 'https://opendart.fss.or.kr/api';
 
@@ -29,8 +29,8 @@ interface RetryConfig {
 }
 
 const DEFAULT_RETRY_CONFIG: RetryConfig = {
-  maxRetries: 3,
-  baseDelay: 1000
+  maxRetries: 1,
+  baseDelay: 500
 };
 
 const sleep = (ms: number): Promise<void> => 
@@ -90,7 +90,23 @@ export class DARTClient {
       url.searchParams.set(key, value);
     });
 
-    const response = await fetch(url.toString());
+    const response = await fetch(url.toString(), {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
+      },
+      redirect: 'manual'
+    });
+    
+    // 리다이렉트 감지
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+      throw new DARTAPIError(
+        `DART API redirected to: ${location}`,
+        response.status
+      );
+    }
     
     if (!response.ok) {
       throw new DARTAPIError(
@@ -114,6 +130,7 @@ export class DARTClient {
 
   async getCompanyList(): Promise<Company[]> {
     const url = `${this.baseUrl}/corpCode.xml?crtfc_key=${this.apiKey}`;
+    
     const response = await fetch(url);
     
     if (!response.ok) {
@@ -124,30 +141,39 @@ export class DARTClient {
     }
     
     const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    const uint8Array = new Uint8Array(arrayBuffer);
     
-    // ZIP 압축 해제
-    const zip = new AdmZip(buffer);
-    const xmlData = zip.readAsText('CORPCODE.xml');
+    // ZIP 압축 해제 (fflate 사용)
+    let unzipped;
+    try {
+      unzipped = unzipSync(uint8Array);
+    } catch (unzipError) {
+      throw new DARTAPIError(`Failed to unzip company list: ${unzipError}`, 500);
+    }
     
-    // XML 파싱
-    const result = await parseStringPromise(xmlData);
-    const list = result.result.list || [];
+    const xmlData = new TextDecoder().decode(unzipped['CORPCODE.xml']);
+    
+    // XML 파싱 (fast-xml-parser 사용)
+    const parser = new XMLParser();
+    const result = parser.parse(xmlData);
+    const list = result.result?.list || [];
+    
+    // 배열이 아닌 경우 배열로 변환
+    const items = Array.isArray(list) ? list : [list];
     
     // 상장 기업만 필터링 (stock_code가 있는 기업)
-    const companies: Company[] = list
-      .filter((item: any) => item.stock_code && item.stock_code[0].trim() !== '')
+    const companies: Company[] = items
+      .filter((item: any) => item.stock_code && String(item.stock_code).trim() !== '')
       .map((item: any): Company => ({
-        corpCode: item.corp_code[0],
-        corpName: item.corp_name[0],
-        stockCode: item.stock_code[0].trim(),
-        market: item.corp_cls[0] === 'Y' ? 'KOSPI' : 
-                (item.corp_cls[0] === 'K' ? 'KOSDAQ' : 'KONEX')
+        corpCode: String(item.corp_code),
+        corpName: String(item.corp_name),
+        stockCode: String(item.stock_code).trim(),
+        market: item.corp_cls === 'Y' ? 'KOSPI' : 
+                (item.corp_cls === 'K' ? 'KOSDAQ' : 'KONEX')
       }));
     
     return companies;
   }
-
 
   async getCompanyInfo(corpCode: string): Promise<CompanyInfo> {
     return withRetry(async () => {
