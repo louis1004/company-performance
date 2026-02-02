@@ -1,0 +1,531 @@
+/**
+ * Company Performance Service - Main Entry Point
+ * 
+ * A Cloudflare Workers application built with Hono framework
+ * to provide financial data for Korean stock market companies.
+ */
+
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+import type { Env, ErrorResponse } from './types';
+import api from './routes/api';
+import { createCacheManager, CACHE_TTL, CACHE_KEYS } from './cache/cache-manager';
+import { createDARTClient } from './clients/dart-client';
+import { getSearchService } from './services/search-service';
+
+// HTML UI Template
+const indexHtml = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>기업 실적 조회 서비스</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f5f7fa;
+      color: #333;
+      line-height: 1.6;
+    }
+    .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px 20px;
+      text-align: center;
+      margin-bottom: 30px;
+      border-radius: 12px;
+    }
+    header h1 { font-size: 1.8rem; margin-bottom: 8px; }
+    header p { opacity: 0.9; font-size: 0.95rem; }
+    .search-box {
+      position: relative;
+      max-width: 500px;
+      margin: 0 auto 30px;
+    }
+    .search-box input {
+      width: 100%;
+      padding: 15px 20px;
+      font-size: 1rem;
+      border: 2px solid #e1e5eb;
+      border-radius: 10px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .search-box input:focus { border-color: #667eea; }
+    .autocomplete {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: white;
+      border: 1px solid #e1e5eb;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      max-height: 300px;
+      overflow-y: auto;
+      z-index: 100;
+      display: none;
+    }
+    .autocomplete.show { display: block; }
+    .autocomplete-item {
+      padding: 12px 16px;
+      cursor: pointer;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .autocomplete-item:hover { background: #f5f7fa; }
+    .autocomplete-item:last-child { border-bottom: none; }
+    .company-name { font-weight: 600; }
+    .company-meta { font-size: 0.85rem; color: #666; }
+    .company-header {
+      background: white;
+      padding: 24px;
+      border-radius: 12px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+      display: none;
+    }
+    .company-header.show { display: block; }
+    .company-title { font-size: 1.5rem; font-weight: 700; }
+    .stock-price {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: #667eea;
+      margin-top: 8px;
+    }
+    .company-info { color: #666; margin-top: 4px; }
+    .grid { display: grid; gap: 20px; }
+    .grid-2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+    .card-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #f0f0f0;
+    }
+    .chart-container { height: 300px; position: relative; }
+    .chart-bars {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-around;
+      height: 250px;
+      padding: 0 10px;
+    }
+    .chart-group { text-align: center; flex: 1; }
+    .chart-bar-wrapper {
+      display: flex;
+      justify-content: center;
+      gap: 4px;
+      height: 200px;
+      align-items: flex-end;
+    }
+    .chart-bar {
+      width: 20px;
+      border-radius: 4px 4px 0 0;
+      transition: height 0.3s;
+      cursor: pointer;
+    }
+    .chart-bar.revenue { background: #667eea; }
+    .chart-bar.operating { background: #48bb78; }
+    .chart-bar.net { background: #ed8936; }
+    .chart-label { font-size: 0.75rem; color: #666; margin-top: 8px; }
+    .chart-legend {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      margin-top: 16px;
+      font-size: 0.85rem;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .legend-dot { width: 12px; height: 12px; border-radius: 3px; }
+    .ratios-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+      gap: 16px;
+    }
+    .ratio-item { text-align: center; }
+    .ratio-value { font-size: 1.4rem; font-weight: 700; color: #667eea; }
+    .ratio-label { font-size: 0.85rem; color: #666; margin-top: 4px; }
+    .list-item {
+      padding: 12px 0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .list-item:last-child { border-bottom: none; }
+    .list-item a {
+      color: #333;
+      text-decoration: none;
+      display: block;
+    }
+    .list-item a:hover { color: #667eea; }
+    .list-title { font-weight: 500; margin-bottom: 4px; }
+    .list-meta { font-size: 0.85rem; color: #888; }
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #888;
+    }
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid #f0f0f0;
+      border-top-color: #667eea;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #888;
+    }
+    .empty-state h2 { font-size: 1.2rem; margin-bottom: 8px; color: #666; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>📊 기업 실적 조회 서비스</h1>
+      <p>KOSPI · KOSDAQ 상장 기업의 재무 데이터를 한눈에</p>
+    </header>
+    <div class="search-box">
+      <input type="text" id="searchInput" placeholder="기업명을 입력하세요 (예: 삼성전자)" autocomplete="off">
+      <div class="autocomplete" id="autocomplete"></div>
+    </div>
+    <div class="empty-state" id="emptyState">
+      <h2>기업을 검색해주세요</h2>
+      <p>검색창에 기업명을 입력하면 재무 데이터를 확인할 수 있습니다</p>
+    </div>
+    <div class="company-header" id="companyHeader">
+      <div class="company-title" id="companyName">-</div>
+      <div class="stock-price" id="stockPrice">-</div>
+      <div class="company-info" id="companyInfo">-</div>
+    </div>
+    <div id="mainContent" style="display: none;">
+      <div class="card" style="margin-bottom: 20px;">
+        <div class="card-title">📈 분기별 재무 실적</div>
+        <div class="chart-container">
+          <div class="chart-bars" id="chartBars"></div>
+          <div class="chart-legend">
+            <div class="legend-item"><div class="legend-dot" style="background: #667eea;"></div>매출액</div>
+            <div class="legend-item"><div class="legend-dot" style="background: #48bb78;"></div>영업이익</div>
+            <div class="legend-item"><div class="legend-dot" style="background: #ed8936;"></div>당기순이익</div>
+          </div>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom: 20px;">
+        <div class="card-title">📊 주요 재무비율</div>
+        <div class="ratios-grid" id="ratiosGrid">
+          <div class="ratio-item"><div class="ratio-value" id="ratioEPS">-</div><div class="ratio-label">EPS</div></div>
+          <div class="ratio-item"><div class="ratio-value" id="ratioPBR">-</div><div class="ratio-label">PBR</div></div>
+          <div class="ratio-item"><div class="ratio-value" id="ratioROA">-</div><div class="ratio-label">ROA</div></div>
+          <div class="ratio-item"><div class="ratio-value" id="ratioROE">-</div><div class="ratio-label">ROE</div></div>
+          <div class="ratio-item"><div class="ratio-value" id="ratioEVEBITDA">-</div><div class="ratio-label">EV/EBITDA</div></div>
+        </div>
+      </div>
+      <div class="grid grid-2">
+        <div class="card">
+          <div class="card-title">📋 최근 공시 (5건)</div>
+          <div id="disclosuresList"><div class="loading"><div class="spinner"></div>공시 정보를 불러오는 중...</div></div>
+        </div>
+        <div class="card">
+          <div class="card-title">📰 최신 뉴스 (10건)</div>
+          <div id="newsList"><div class="loading"><div class="spinner"></div>뉴스를 불러오는 중...</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const API_BASE = '/api';
+    let selectedCorpCode = null;
+    let debounceTimer = null;
+    const searchInput = document.getElementById('searchInput');
+    const autocomplete = document.getElementById('autocomplete');
+    const emptyState = document.getElementById('emptyState');
+    const companyHeader = document.getElementById('companyHeader');
+    const mainContent = document.getElementById('mainContent');
+
+    function formatKoreanCurrency(value) {
+      if (value === null || value === undefined) return '-';
+      const absValue = Math.abs(value);
+      if (absValue >= 1e12) return (value / 1e12).toFixed(2) + '조';
+      if (absValue >= 1e8) return (value / 1e8).toFixed(0) + '억';
+      if (absValue >= 1e4) return (value / 1e4).toFixed(0) + '만';
+      return value.toLocaleString();
+    }
+
+    function formatPrice(price) {
+      if (!price) return '-';
+      return price.toLocaleString() + '원';
+    }
+
+    function formatDate(dateStr) {
+      if (!dateStr || dateStr.length !== 8) return dateStr;
+      return dateStr.slice(0,4) + '.' + dateStr.slice(4,6) + '.' + dateStr.slice(6,8);
+    }
+
+    searchInput.addEventListener('input', (e) => {
+      const query = e.target.value.trim();
+      clearTimeout(debounceTimer);
+      if (query.length < 2) {
+        autocomplete.classList.remove('show');
+        return;
+      }
+      debounceTimer = setTimeout(async () => {
+        try {
+          const res = await fetch(API_BASE + '/companies/search?q=' + encodeURIComponent(query));
+          const data = await res.json();
+          if (data.companies && data.companies.length > 0) {
+            renderAutocomplete(data.companies);
+          } else {
+            autocomplete.innerHTML = '<div class="autocomplete-item">검색 결과가 없습니다</div>';
+            autocomplete.classList.add('show');
+          }
+        } catch (err) {
+          console.error('Search error:', err);
+        }
+      }, 300);
+    });
+
+    function renderAutocomplete(companies) {
+      autocomplete.innerHTML = companies.map(c => 
+        '<div class="autocomplete-item" data-corp-code="' + c.corpCode + '" data-stock-code="' + c.stockCode + '">' +
+        '<div class="company-name">' + c.corpName + '</div>' +
+        '<div class="company-meta">' + (c.stockCode || '') + ' · ' + (c.market || '') + '</div>' +
+        '</div>'
+      ).join('');
+      autocomplete.classList.add('show');
+      autocomplete.querySelectorAll('.autocomplete-item').forEach(item => {
+        item.addEventListener('click', () => {
+          const corpCode = item.dataset.corpCode;
+          const corpName = item.querySelector('.company-name').textContent;
+          searchInput.value = corpName;
+          autocomplete.classList.remove('show');
+          loadCompanyData(corpCode);
+        });
+      });
+    }
+
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.search-box')) autocomplete.classList.remove('show');
+    });
+
+    async function loadCompanyData(corpCode) {
+      selectedCorpCode = corpCode;
+      emptyState.style.display = 'none';
+      companyHeader.classList.add('show');
+      mainContent.style.display = 'block';
+      document.getElementById('companyName').textContent = '로딩 중...';
+      document.getElementById('stockPrice').textContent = '-';
+      document.getElementById('companyInfo').textContent = '';
+      await Promise.all([
+        loadCompanyInfo(corpCode),
+        loadFinancialData(corpCode),
+        loadRatios(corpCode),
+        loadDisclosures(corpCode),
+        loadNews(corpCode)
+      ]);
+    }
+
+    async function loadCompanyInfo(corpCode) {
+      try {
+        const res = await fetch(API_BASE + '/companies/' + corpCode);
+        const data = await res.json();
+        if (data.company) {
+          document.getElementById('companyName').textContent = data.company.corpName;
+          document.getElementById('stockPrice').textContent = data.formattedPrice || formatPrice(data.stockPrice);
+          document.getElementById('companyInfo').textContent = (data.company.stockCode || '') + ' · ' + (data.company.market || '');
+        }
+      } catch (err) {
+        console.error('Company info error:', err);
+        document.getElementById('companyName').textContent = '정보를 불러올 수 없습니다';
+      }
+    }
+
+    async function loadFinancialData(corpCode) {
+      const chartBars = document.getElementById('chartBars');
+      chartBars.innerHTML = '<div class="loading"><div class="spinner"></div>재무 데이터 로딩 중...</div>';
+      try {
+        const res = await fetch(API_BASE + '/companies/' + corpCode + '/financial');
+        const data = await res.json();
+        if (data.chartData && data.chartData.length > 0) {
+          renderChart(data.chartData);
+        } else {
+          chartBars.innerHTML = '<div class="loading">재무 데이터가 없습니다</div>';
+        }
+      } catch (err) {
+        console.error('Financial data error:', err);
+        chartBars.innerHTML = '<div class="loading">재무 데이터를 불러올 수 없습니다</div>';
+      }
+    }
+
+    function renderChart(chartData) {
+      const chartBars = document.getElementById('chartBars');
+      const allValues = chartData.flatMap(d => [d.revenue, d.operatingProfit, d.netIncome]);
+      const maxValue = Math.max(...allValues.filter(v => v > 0));
+      chartBars.innerHTML = chartData.map(d => {
+        const revenueHeight = maxValue > 0 ? (d.revenue / maxValue) * 180 : 0;
+        const opHeight = maxValue > 0 ? (Math.abs(d.operatingProfit) / maxValue) * 180 : 0;
+        const netHeight = maxValue > 0 ? (Math.abs(d.netIncome) / maxValue) * 180 : 0;
+        return '<div class="chart-group">' +
+          '<div class="chart-bar-wrapper">' +
+          '<div class="chart-bar revenue" style="height: ' + Math.max(revenueHeight, 4) + 'px" title="매출액: ' + formatKoreanCurrency(d.revenue) + '"></div>' +
+          '<div class="chart-bar operating" style="height: ' + Math.max(opHeight, 4) + 'px" title="영업이익: ' + formatKoreanCurrency(d.operatingProfit) + '"></div>' +
+          '<div class="chart-bar net" style="height: ' + Math.max(netHeight, 4) + 'px" title="당기순이익: ' + formatKoreanCurrency(d.netIncome) + '"></div>' +
+          '</div>' +
+          '<div class="chart-label">' + d.quarter + '</div>' +
+          '</div>';
+      }).join('');
+    }
+
+    async function loadRatios(corpCode) {
+      ['ratioEPS', 'ratioPBR', 'ratioROA', 'ratioROE', 'ratioEVEBITDA'].forEach(id => document.getElementById(id).textContent = '-');
+      try {
+        const res = await fetch(API_BASE + '/companies/' + corpCode + '/ratios');
+        const data = await res.json();
+        if (data.ratios) {
+          document.getElementById('ratioEPS').textContent = data.ratios.eps ? data.ratios.eps.toLocaleString() + '원' : '-';
+          document.getElementById('ratioPBR').textContent = data.ratios.pbr ? data.ratios.pbr.toFixed(2) + '배' : '-';
+          document.getElementById('ratioROA').textContent = data.ratios.roa ? data.ratios.roa.toFixed(2) + '%' : '-';
+          document.getElementById('ratioROE').textContent = data.ratios.roe ? data.ratios.roe.toFixed(2) + '%' : '-';
+          document.getElementById('ratioEVEBITDA').textContent = data.ratios.evEbitda ? data.ratios.evEbitda.toFixed(2) + '배' : '-';
+        }
+      } catch (err) {
+        console.error('Ratios error:', err);
+      }
+    }
+
+    async function loadDisclosures(corpCode) {
+      const list = document.getElementById('disclosuresList');
+      list.innerHTML = '<div class="loading"><div class="spinner"></div>공시 정보를 불러오는 중...</div>';
+      try {
+        const res = await fetch(API_BASE + '/companies/' + corpCode + '/disclosures');
+        const data = await res.json();
+        if (data.disclosures && data.disclosures.length > 0) {
+          list.innerHTML = data.disclosures.map(d =>
+            '<div class="list-item">' +
+            '<a href="' + d.url + '" target="_blank" rel="noopener">' +
+            '<div class="list-title">' + d.report_nm + '</div>' +
+            '<div class="list-meta">' + formatDate(d.rcept_dt) + '</div>' +
+            '</a></div>'
+          ).join('');
+        } else {
+          list.innerHTML = '<div class="loading">공시 정보가 없습니다</div>';
+        }
+      } catch (err) {
+        console.error('Disclosures error:', err);
+        list.innerHTML = '<div class="loading">공시 정보를 불러올 수 없습니다</div>';
+      }
+    }
+
+    async function loadNews(corpCode) {
+      const list = document.getElementById('newsList');
+      list.innerHTML = '<div class="loading"><div class="spinner"></div>뉴스를 불러오는 중...</div>';
+      try {
+        const res = await fetch(API_BASE + '/companies/' + corpCode + '/news');
+        const data = await res.json();
+        if (data.articles && data.articles.length > 0) {
+          list.innerHTML = data.articles.map(a =>
+            '<div class="list-item">' +
+            '<a href="' + a.url + '" target="_blank" rel="noopener">' +
+            '<div class="list-title">' + a.title + '</div>' +
+            '<div class="list-meta">' + (a.source || '') + ' · ' + (a.date || '') + '</div>' +
+            '</a></div>'
+          ).join('');
+        } else {
+          list.innerHTML = '<div class="loading">뉴스가 없습니다</div>';
+        }
+      } catch (err) {
+        console.error('News error:', err);
+        list.innerHTML = '<div class="loading">뉴스를 불러올 수 없습니다</div>';
+      }
+    }
+  </script>
+</body>
+</html>`;
+
+// Create Hono application
+const app = new Hono<{ Bindings: Env }>();
+
+// Enable CORS for all routes
+app.use('*', cors());
+
+// Request ID middleware
+app.use('*', async (c, next) => {
+  const requestId = crypto.randomUUID();
+  c.set('requestId', requestId);
+  c.header('X-Request-ID', requestId);
+  await next();
+});
+
+// Health check endpoint
+app.get('/health', (c) => {
+  return c.json({
+    status: 'healthy',
+    service: 'company-performance',
+    timestamp: new Date().toISOString(),
+    version: '1.0.0'
+  });
+});
+
+// Root endpoint - Serve HTML UI
+app.get('/', (c) => {
+  return c.html(indexHtml);
+});
+
+// Initialize company list cache on first request (MUST be before routes)
+app.use('/api/*', async (c, next) => {
+  const searchService = getSearchService();
+  
+  if (!searchService.isInitialized()) {
+    try {
+      const cache = createCacheManager(c.env.COMPANY_CACHE);
+      let companies = await cache.get<any[]>(CACHE_KEYS.COMPANY_LIST);
+      
+      if (!companies) {
+        const dartClient = createDARTClient(c.env.DART_API_KEY);
+        companies = await dartClient.getCompanyList();
+        await cache.set(CACHE_KEYS.COMPANY_LIST, companies, CACHE_TTL.COMPANY_LIST);
+      }
+      
+      searchService.initializeIndex(companies);
+    } catch (error) {
+      // Silent fail - search will return empty results
+    }
+  }
+  
+  await next();
+});
+
+// Mount API routes
+app.route('/api', api);
+
+// 404 handler
+app.notFound((c) => {
+  const error: ErrorResponse = {
+    error: 'NOT_FOUND',
+    message: '요청하신 리소스를 찾을 수 없습니다.'
+  };
+  return c.json(error, 404);
+});
+
+// Global error handler
+app.onError((err, c) => {
+  const error: ErrorResponse = {
+    error: 'INTERNAL_ERROR',
+    message: '서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요.',
+    code: err.message
+  };
+  
+  return c.json(error, 500);
+});
+
+// Export the application
+export default app;

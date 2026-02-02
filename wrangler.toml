@@ -1,0 +1,23 @@
+name = "company-performance"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# Environment variables (use wrangler secret for production)
+[vars]
+DART_API_KEY = "8d704c111f89fc23956795e80b82cc141e47ea63"
+
+# KV Namespace binding
+# Create with: wrangler kv:namespace create "COMPANY_CACHE"
+# Then uncomment and add the ID:
+# [[kv_namespaces]]
+# binding = "COMPANY_CACHE"
+# id = "your-kv-namespace-id"
+
+# Build configuration
+[build]
+command = ""
+
+# Development settings
+[dev]
+port = 8787
+local_protocol = "http"
