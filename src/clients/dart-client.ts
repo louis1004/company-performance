@@ -414,6 +414,7 @@ export class DARTClient {
       const epsItem = response.list.find((item: any) => 
         item.account_nm === '기본주당이익' || 
         item.account_nm === '기본주당이익(손실)' ||
+        item.account_nm === '보통주기본주당이익' ||
         item.account_nm.includes('기본주당순이익')
       );
       
@@ -540,7 +541,9 @@ export class DARTClient {
         // Q4(연간 보고서)에서 발행주식수 계산 (EPS 역산)
         if (q.quarter === 'Q4' && totalShares === 0) {
           const epsItem = response.list.find((item: any) => 
-            item.account_nm === '기본주당이익' || item.account_nm === '기본주당이익(손실)'
+            item.account_nm === '기본주당이익' || 
+            item.account_nm === '기본주당이익(손실)' ||
+            item.account_nm === '보통주기본주당이익'
           );
           const eps = this.parseAmount(epsItem?.thstrm_amount);
           if (eps > 0 && netIncome > 0) {
