@@ -270,7 +270,7 @@ export class DARTClient {
     url.searchParams.set('corp_code', corpCode);
     url.searchParams.set('pblntf_ty', 'A');
     url.searchParams.set('bgn_de', bgn_de);
-    url.searchParams.set('page_count', String(limit));
+    url.searchParams.set('page_count', '20'); // 중복 제거를 위해 더 많이 가져옴
     
     const response = await fetch(url.toString(), {
       headers: {
@@ -286,7 +286,33 @@ export class DARTClient {
     // status가 000이 아니면 빈 배열 반환 (013: 조회된 데이터 없음)
     if (data.status !== '000' || !data.list) return [];
 
-    return data.list.slice(0, limit).map((item: any) => ({
+    // 같은 기간 보고서 중 최신만 유지 (기재정정 우선)
+    // 예: "사업보고서 (2024.12)"와 "[기재정정]사업보고서 (2024.12)" 중 최신만
+    const reportMap = new Map<string, any>();
+    
+    for (const item of data.list) {
+      // 기간 키 추출: "분기보고서 (2025.09)" -> "분기보고서-2025.09"
+      // "[기재정정]사업보고서 (2024.12)" -> "사업보고서-2024.12"
+      const reportNm = item.report_nm as string;
+      const cleanName = reportNm.replace(/^\[기재정정\]/, '');
+      const match = cleanName.match(/(.+보고서)\s*\((\d{4}\.\d{2})\)/);
+      
+      if (match) {
+        const key = `${match[1]}-${match[2]}`;
+        
+        // 이미 있는 경우, 더 최신(rcept_dt가 큰) 것만 유지
+        if (!reportMap.has(key) || item.rcept_dt > reportMap.get(key).rcept_dt) {
+          reportMap.set(key, item);
+        }
+      }
+    }
+    
+    // 날짜순 정렬 후 limit 적용
+    const uniqueReports = Array.from(reportMap.values())
+      .sort((a, b) => b.rcept_dt.localeCompare(a.rcept_dt))
+      .slice(0, limit);
+
+    return uniqueReports.map((item: any) => ({
       reportNm: item.report_nm,
       rcept_no: item.rcept_no,
       rcept_dt: item.rcept_dt,
