@@ -187,6 +187,43 @@ const indexHtml = `<!DOCTYPE html>
       color: #888;
     }
     .empty-state h2 { font-size: 1.2rem; margin-bottom: 8px; color: #666; }
+    
+    /* Mobile Responsive */
+    @media (max-width: 768px) {
+      .container { padding: 12px; }
+      header { padding: 20px 16px; margin-bottom: 20px; border-radius: 8px; }
+      header h1 { font-size: 1.4rem; }
+      header p { font-size: 0.85rem; }
+      .search-box { margin-bottom: 20px; }
+      .search-box input { padding: 12px 16px; font-size: 16px; }
+      .company-header { padding: 16px; }
+      .company-title { font-size: 1.2rem; }
+      .stock-price { font-size: 1.4rem; }
+      .card { padding: 16px; border-radius: 8px; }
+      .card-title { font-size: 1rem; margin-bottom: 12px; padding-bottom: 8px; }
+      .chart-container { height: 250px; }
+      .chart-bars { height: 200px; }
+      .chart-bar-wrapper { height: 160px; }
+      .chart-bar { width: 14px; }
+      .chart-legend { gap: 12px; font-size: 0.75rem; flex-wrap: wrap; }
+      .legend-dot { width: 10px; height: 10px; }
+      .ratios-grid { grid-template-columns: repeat(3, 1fr); gap: 12px; }
+      .ratio-value { font-size: 1.1rem; }
+      .ratio-label { font-size: 0.75rem; }
+      .grid-2 { grid-template-columns: 1fr; }
+      .list-item { padding: 10px 0; }
+      .list-title { font-size: 0.9rem; line-height: 1.4; }
+      .list-meta { font-size: 0.75rem; }
+      .empty-state { padding: 40px 16px; }
+      .empty-state h2 { font-size: 1rem; }
+      .empty-state p { font-size: 0.9rem; }
+    }
+    
+    @media (max-width: 480px) {
+      .ratios-grid { grid-template-columns: repeat(2, 1fr); }
+      .chart-bar { width: 10px; }
+      .chart-label { font-size: 0.65rem; }
+    }
   </style>
 </head>
 <body>
@@ -224,6 +261,7 @@ const indexHtml = `<!DOCTYPE html>
         <div class="card-title">📊 주요 재무비율</div>
         <div class="ratios-grid" id="ratiosGrid">
           <div class="ratio-item"><div class="ratio-value" id="ratioEPS">-</div><div class="ratio-label">EPS</div></div>
+          <div class="ratio-item"><div class="ratio-value" id="ratioPER">-</div><div class="ratio-label">PER</div></div>
           <div class="ratio-item"><div class="ratio-value" id="ratioPBR">-</div><div class="ratio-label">PBR</div></div>
           <div class="ratio-item"><div class="ratio-value" id="ratioROA">-</div><div class="ratio-label">ROA</div></div>
           <div class="ratio-item"><div class="ratio-value" id="ratioROE">-</div><div class="ratio-label">ROE</div></div>
@@ -255,10 +293,15 @@ const indexHtml = `<!DOCTYPE html>
     function formatKoreanCurrency(value) {
       if (value === null || value === undefined) return '-';
       const absValue = Math.abs(value);
-      if (absValue >= 1e12) return (value / 1e12).toFixed(2) + '조';
+      if (absValue >= 1e12) return (value / 1e12).toFixed(1) + '조';
       if (absValue >= 1e8) return (value / 1e8).toFixed(0) + '억';
       if (absValue >= 1e4) return (value / 1e4).toFixed(0) + '만';
       return value.toLocaleString();
+    }
+
+    // 억 원 단위로 변환 (그래프 스케일 통일용)
+    function toHundredMillion(value) {
+      return value / 1e8;
     }
 
     function formatPrice(price) {
@@ -368,12 +411,24 @@ const indexHtml = `<!DOCTYPE html>
 
     function renderChart(chartData) {
       const chartBars = document.getElementById('chartBars');
-      const allValues = chartData.flatMap(d => [d.revenue, d.operatingProfit, d.netIncome]);
+      
+      // 모든 값을 억 원 단위로 변환하여 스케일 통일
+      const allValues = chartData.flatMap(d => [
+        toHundredMillion(d.revenue), 
+        toHundredMillion(d.operatingProfit), 
+        toHundredMillion(d.netIncome)
+      ]);
       const maxValue = Math.max(...allValues.filter(v => v > 0));
+      
       chartBars.innerHTML = chartData.map(d => {
-        const revenueHeight = maxValue > 0 ? (d.revenue / maxValue) * 180 : 0;
-        const opHeight = maxValue > 0 ? (Math.abs(d.operatingProfit) / maxValue) * 180 : 0;
-        const netHeight = maxValue > 0 ? (Math.abs(d.netIncome) / maxValue) * 180 : 0;
+        const revenueNorm = toHundredMillion(d.revenue);
+        const opNorm = toHundredMillion(Math.abs(d.operatingProfit));
+        const netNorm = toHundredMillion(Math.abs(d.netIncome));
+        
+        const revenueHeight = maxValue > 0 ? (revenueNorm / maxValue) * 180 : 0;
+        const opHeight = maxValue > 0 ? (opNorm / maxValue) * 180 : 0;
+        const netHeight = maxValue > 0 ? (netNorm / maxValue) * 180 : 0;
+        
         return '<div class="chart-group">' +
           '<div class="chart-bar-wrapper">' +
           '<div class="chart-bar revenue" style="height: ' + Math.max(revenueHeight, 4) + 'px" title="매출액: ' + formatKoreanCurrency(d.revenue) + '"></div>' +
@@ -386,12 +441,13 @@ const indexHtml = `<!DOCTYPE html>
     }
 
     async function loadRatios(corpCode) {
-      ['ratioEPS', 'ratioPBR', 'ratioROA', 'ratioROE', 'ratioEVEBITDA'].forEach(id => document.getElementById(id).textContent = '-');
+      ['ratioEPS', 'ratioPER', 'ratioPBR', 'ratioROA', 'ratioROE', 'ratioEVEBITDA'].forEach(id => document.getElementById(id).textContent = '-');
       try {
         const res = await fetch(API_BASE + '/companies/' + corpCode + '/ratios');
         const data = await res.json();
         if (data.ratios) {
           document.getElementById('ratioEPS').textContent = data.ratios.eps ? data.ratios.eps.toLocaleString() + '원' : '-';
+          document.getElementById('ratioPER').textContent = data.ratios.per ? data.ratios.per.toFixed(2) + '배' : '-';
           document.getElementById('ratioPBR').textContent = data.ratios.pbr ? data.ratios.pbr.toFixed(2) + '배' : '-';
           document.getElementById('ratioROA').textContent = data.ratios.roa ? data.ratios.roa.toFixed(2) + '%' : '-';
           document.getElementById('ratioROE').textContent = data.ratios.roe ? data.ratios.roe.toFixed(2) + '%' : '-';
@@ -412,8 +468,8 @@ const indexHtml = `<!DOCTYPE html>
           list.innerHTML = data.disclosures.map(d =>
             '<div class="list-item">' +
             '<a href="' + d.url + '" target="_blank" rel="noopener">' +
-            '<div class="list-title">' + d.report_nm + '</div>' +
-            '<div class="list-meta">' + formatDate(d.rcept_dt) + '</div>' +
+            '<div class="list-title">' + d.reportNm + '</div>' +
+            '<div class="list-meta">' + formatDate(d.rcept_dt) + ' · ' + d.flr_nm + '</div>' +
             '</a></div>'
           ).join('');
         } else {
@@ -436,7 +492,7 @@ const indexHtml = `<!DOCTYPE html>
             '<div class="list-item">' +
             '<a href="' + a.url + '" target="_blank" rel="noopener">' +
             '<div class="list-title">' + a.title + '</div>' +
-            '<div class="list-meta">' + (a.source || '') + ' · ' + (a.date || '') + '</div>' +
+            '<div class="list-meta">' + (a.source || '') + ' · ' + (a.publishedDate || '') + '</div>' +
             '</a></div>'
           ).join('');
         } else {

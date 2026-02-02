@@ -152,35 +152,65 @@ api.get('/companies/:corpCode/financial', async (c) => {
 
 /**
  * Financial ratios endpoint - GET /api/companies/{corpCode}/ratios
+ * 최근 4개 분기 데이터를 합산하여 TTM(Trailing Twelve Months) 기준으로 계산
  */
 api.get('/companies/:corpCode/ratios', async (c) => {
   const corpCode = c.req.param('corpCode');
   const dartClient = createDARTClient(c.env.DART_API_KEY);
   
   try {
-    const currentYear = new Date().getFullYear().toString();
-    const financialDetails = await dartClient.getFinancialDetails(corpCode, currentYear);
-    
     const companyInfo = await dartClient.getCompanyInfo(corpCode);
     const stockPrice = await getCurrentPrice(companyInfo.stockCode);
     
-    const statements = await dartClient.getFinancialStatements(corpCode, currentYear, '11011');
-    const netIncome = statements[0]?.netIncome || 0;
+    // 최근 4개 분기 원시 데이터 가져오기
+    const ttmData = await dartClient.getTTMFinancialData(corpCode);
     
-    const ratios = calculateAllRatios(financialDetails, stockPrice, netIncome);
-    
-    // EPS 소수점 제거
-    if (ratios.eps !== null) {
-      ratios.eps = Math.round(ratios.eps);
+    if (!ttmData || ttmData.quarters.length === 0) {
+      return c.json({
+        ratios: { eps: null, per: null, pbr: null, roa: null, roe: null },
+        calculatedAt: new Date().toISOString(),
+        message: '재무비율 데이터를 찾을 수 없습니다.'
+      });
     }
     
+    const { revenue, operatingProfit, netIncome, totalAssets, totalEquity, totalShares } = ttmData;
+    
+    // 비율 직접 계산
+    const eps = totalShares > 0 ? Math.round(netIncome / totalShares) : null;
+    const bps = totalShares > 0 ? Math.round(totalEquity / totalShares) : null;
+    const per = eps && eps > 0 ? parseFloat((stockPrice / eps).toFixed(2)) : null;
+    const pbr = bps && bps > 0 ? parseFloat((stockPrice / bps).toFixed(2)) : null;
+    const roa = totalAssets > 0 ? parseFloat(((netIncome / totalAssets) * 100).toFixed(2)) : null;
+    const roe = totalEquity > 0 ? parseFloat(((netIncome / totalEquity) * 100).toFixed(2)) : null;
+    const operatingMargin = revenue > 0 ? parseFloat(((operatingProfit / revenue) * 100).toFixed(2)) : null;
+    const netMargin = revenue > 0 ? parseFloat(((netIncome / revenue) * 100).toFixed(2)) : null;
+    const marketCap = totalShares > 0 ? stockPrice * totalShares : null;
+    
     return c.json({
-      ratios,
+      ratios: { eps, per, pbr, roa, roe, operatingMargin, netMargin },
+      financials: {
+        revenue,
+        operatingProfit,
+        netIncome,
+        totalAssets,
+        totalEquity
+      },
+      period: 'TTM',
+      quarters: ttmData.quarters,
+      stockPrice,
+      marketCap,
+      bps,
+      totalShares,
       calculatedAt: new Date().toISOString()
     });
   } catch (error) {
-    const errorResponse = handleError(error);
-    return c.json(errorResponse, 500);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    return c.json({
+      ratios: { eps: null, per: null, pbr: null, roa: null, roe: null },
+      calculatedAt: new Date().toISOString(),
+      message: '재무비율 데이터를 계산할 수 없습니다.',
+      error: errorMessage
+    });
   }
 });
 
@@ -238,7 +268,8 @@ api.get('/companies/:corpCode/news', async (c) => {
     }
     
     const companyInfo = await dartClient.getCompanyInfo(corpCode);
-    const articles = await scrapeNews(companyInfo.corpName, 10);
+    // stockCode를 전달하여 네이버 증권 API 사용
+    const articles = await scrapeNews(companyInfo.corpName, 10, companyInfo.stockCode);
     
     const response = {
       articles,

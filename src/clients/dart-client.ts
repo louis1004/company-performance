@@ -296,6 +296,253 @@ export class DARTClient {
     });
   }
 
+  /**
+   * 재무비율 계산을 위한 원시 데이터 추출
+   * DART API에서 직접 EPS, 당기순이익, 자산총계, 자본총계, 발행주식수 추출
+   */
+  async getRawFinancialData(
+    corpCode: string,
+    year: string,
+    reportCode: string = '11011'
+  ): Promise<{
+    netIncome: number;
+    totalAssets: number;
+    totalEquity: number;
+    eps: number | null;
+    totalShares: number;
+  }> {
+    return withRetry(async () => {
+      const response = await this.request<DARTResponse<any>>(
+        '/fnlttSinglAcntAll.json',
+        {
+          corp_code: corpCode,
+          bsns_year: year,
+          reprt_code: reportCode,
+          fs_div: 'CFS'
+        }
+      );
+      
+      if (!response.list || response.list.length === 0) {
+        throw new DARTAPIError('재무제표 데이터가 없습니다.', 404);
+      }
+      
+      // 당기순이익 찾기 (여러 가지 이름으로 존재할 수 있음)
+      const netIncomeItem = response.list.find((item: any) => 
+        item.account_nm === '당기순이익' || 
+        item.account_nm === '당기순이익(손실)' ||
+        item.account_nm.includes('지배기업의 소유주에게 귀속되는 당기순이익') ||
+        item.sj_nm === '손익계산서' && item.account_nm.includes('당기순이익')
+      );
+      
+      // 자산총계 찾기
+      const totalAssetsItem = response.list.find((item: any) => 
+        item.account_nm === '자산총계'
+      );
+      
+      // 자본총계 찾기
+      const totalEquityItem = response.list.find((item: any) => 
+        item.account_nm === '자본총계' || 
+        item.account_nm === '지배기업 소유주지분'
+      );
+      
+      // 기본주당이익(EPS) 찾기 - DART에서 직접 제공
+      const epsItem = response.list.find((item: any) => 
+        item.account_nm === '기본주당이익' || 
+        item.account_nm === '기본주당이익(손실)' ||
+        item.account_nm.includes('기본주당순이익')
+      );
+      
+      // 발행주식수 찾기 - 재무제표에서 추출 시도
+      // 발행주식수는 보통 주석이나 별도 API에서 가져와야 함
+      // EPS = 당기순이익 / 발행주식수 이므로, 역산 가능
+      const netIncome = this.parseAmount(netIncomeItem?.thstrm_amount);
+      const eps = epsItem ? this.parseAmount(epsItem?.thstrm_amount) : null;
+      
+      // 발행주식수 역산: 당기순이익 / EPS
+      let totalShares = 0;
+      if (eps && eps > 0 && netIncome > 0) {
+        totalShares = Math.round(netIncome / eps);
+      }
+      
+      return {
+        netIncome,
+        totalAssets: this.parseAmount(totalAssetsItem?.thstrm_amount),
+        totalEquity: this.parseAmount(totalEquityItem?.thstrm_amount),
+        eps,
+        totalShares
+      };
+    });
+  }
+
+  /**
+   * TTM(Trailing Twelve Months) 재무 데이터 가져오기
+   * 최근 4개 분기의 원시 데이터만 반환 (비율 계산은 호출측에서)
+   */
+  async getTTMFinancialData(corpCode: string): Promise<{
+    revenue: number;
+    operatingProfit: number;
+    netIncome: number;
+    totalAssets: number;
+    totalEquity: number;
+    totalShares: number;
+    quarters: string[];
+  } | null> {
+    const currentYear = new Date().getFullYear();
+    const currentMonth = new Date().getMonth() + 1;
+    
+    // 분기별 보고서 코드: Q1=11013, Q2=11012, Q3=11014, Q4=11011
+    const allQuarters: { year: number; quarter: string; code: string }[] = [];
+    
+    // 최근 3년간의 모든 분기 생성 (역순)
+    for (let year = currentYear; year >= currentYear - 2; year--) {
+      allQuarters.push({ year, quarter: 'Q4', code: '11011' });
+      allQuarters.push({ year, quarter: 'Q3', code: '11014' });
+      allQuarters.push({ year, quarter: 'Q2', code: '11012' });
+      allQuarters.push({ year, quarter: 'Q1', code: '11013' });
+    }
+    
+    // 현재 시점에서 공시 가능한 분기만 필터링
+    const availableQuarters = allQuarters.filter(q => {
+      if (q.year > currentYear) return false;
+      if (q.year === currentYear) {
+        if (q.quarter === 'Q4') return currentMonth >= 3;
+        if (q.quarter === 'Q3') return currentMonth >= 11;
+        if (q.quarter === 'Q2') return currentMonth >= 8;
+        if (q.quarter === 'Q1') return currentMonth >= 5;
+        return false;
+      }
+      return true;
+    });
+    
+    // 분기별 원시 데이터 수집
+    const quarterlyData: {
+      year: number;
+      quarter: string;
+      revenue: number;
+      operatingProfit: number;
+      netIncome: number;
+      totalAssets: number;
+      totalEquity: number;
+    }[] = [];
+    
+    let totalShares = 0;
+    
+    for (const q of availableQuarters) {
+      if (quarterlyData.length >= 6) break; // 4개 + 누적 계산용
+      
+      try {
+        const response = await this.request<DARTResponse<any>>(
+          '/fnlttSinglAcntAll.json',
+          {
+            corp_code: corpCode,
+            bsns_year: q.year.toString(),
+            reprt_code: q.code,
+            fs_div: 'CFS'
+          }
+        );
+        
+        if (!response.list || response.list.length === 0) continue;
+        
+        // 매출액
+        const revenueItem = response.list.find((item: any) => 
+          item.account_nm === '매출액' || item.account_nm === '수익(매출액)'
+        );
+        
+        // 영업이익
+        const operatingProfitItem = response.list.find((item: any) => 
+          item.account_nm === '영업이익' || item.account_nm === '영업이익(손실)'
+        );
+        
+        // 당기순이익
+        const netIncomeItem = response.list.find((item: any) => 
+          item.account_nm === '당기순이익' && item.sj_nm === '손익계산서'
+        ) || response.list.find((item: any) => 
+          item.account_nm === '당기순이익'
+        );
+        
+        // 자산총계, 자본총계
+        const totalAssetsItem = response.list.find((item: any) => 
+          item.account_nm === '자산총계'
+        );
+        const totalEquityItem = response.list.find((item: any) => 
+          item.account_nm === '자본총계'
+        );
+        
+        const revenue = this.parseAmount(revenueItem?.thstrm_amount);
+        const operatingProfit = this.parseAmount(operatingProfitItem?.thstrm_amount);
+        const netIncome = this.parseAmount(netIncomeItem?.thstrm_amount);
+        
+        // Q4(연간 보고서)에서 발행주식수 계산 (EPS 역산)
+        if (q.quarter === 'Q4' && totalShares === 0) {
+          const epsItem = response.list.find((item: any) => 
+            item.account_nm === '기본주당이익' || item.account_nm === '기본주당이익(손실)'
+          );
+          const eps = this.parseAmount(epsItem?.thstrm_amount);
+          if (eps > 0 && netIncome > 0) {
+            totalShares = Math.round(netIncome / eps);
+          }
+        }
+        
+        if (netIncome !== 0 || revenue !== 0) {
+          quarterlyData.push({
+            year: q.year,
+            quarter: q.quarter,
+            revenue,
+            operatingProfit,
+            netIncome,
+            totalAssets: this.parseAmount(totalAssetsItem?.thstrm_amount),
+            totalEquity: this.parseAmount(totalEquityItem?.thstrm_amount)
+          });
+        }
+      } catch (e) {
+        continue;
+      }
+    }
+    
+    if (quarterlyData.length === 0) return null;
+    
+    // 분기별 값 계산 (누적값에서 해당 분기만 추출)
+    const quarterOnlyData: (typeof quarterlyData[0] & { 
+      qRevenue: number; 
+      qOperatingProfit: number; 
+      qNetIncome: number; 
+    })[] = [];
+    
+    for (let i = 0; i < Math.min(quarterlyData.length, 4); i++) {
+      const current = quarterlyData[i];
+      let qRevenue = current.revenue;
+      let qOperatingProfit = current.operatingProfit;
+      let qNetIncome = current.netIncome;
+      
+      const prevQuarterMap: Record<string, string> = { 'Q4': 'Q3', 'Q3': 'Q2', 'Q2': 'Q1' };
+      const prevQuarter = prevQuarterMap[current.quarter];
+      
+      if (prevQuarter) {
+        const prevData = quarterlyData.find(q => q.year === current.year && q.quarter === prevQuarter);
+        if (prevData) {
+          qRevenue = current.revenue - prevData.revenue;
+          qOperatingProfit = current.operatingProfit - prevData.operatingProfit;
+          qNetIncome = current.netIncome - prevData.netIncome;
+        }
+      }
+      
+      quarterOnlyData.push({ ...current, qRevenue, qOperatingProfit, qNetIncome });
+    }
+    
+    // TTM 합산
+    const latestQuarter = quarterOnlyData[0];
+    
+    return {
+      revenue: quarterOnlyData.reduce((sum, q) => sum + q.qRevenue, 0),
+      operatingProfit: quarterOnlyData.reduce((sum, q) => sum + q.qOperatingProfit, 0),
+      netIncome: quarterOnlyData.reduce((sum, q) => sum + q.qNetIncome, 0),
+      totalAssets: latestQuarter.totalAssets,
+      totalEquity: latestQuarter.totalEquity,
+      totalShares,
+      quarters: quarterOnlyData.map(q => `${q.year}-${q.quarter}`)
+    };
+  }
+
   private parseAmount(amount: string | undefined): number {
     if (!amount) return 0;
     const cleaned = amount.replace(/,/g, '').replace(/\s/g, '');

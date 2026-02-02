@@ -93,6 +93,7 @@ export interface NewsArticle {
   url: string;
   publishedDate: string;
   source: string;
+  summary?: string;
 }
 
 // API Response models
