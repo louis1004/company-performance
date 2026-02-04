@@ -280,13 +280,15 @@ const indexHtml = `<!DOCTYPE html>
     </div>
     <div id="mainContent" style="display: none;">
       <div class="card" style="margin-bottom: 20px;">
-        <div class="card-title">📈 분기별 재무 실적</div>
+        <div class="card-title">📈 분기별 매출액</div>
         <div class="chart-container">
-          <div class="chart-bars" id="chartBars"></div>
-          <div class="chart-legend">
-            <div class="legend-item"><div class="legend-dot" style="background: #667eea;"></div>매출액</div>
-            <div class="legend-item"><div class="legend-dot" style="background: #48bb78;"></div>영업이익</div>
-          </div>
+          <div class="chart-bars" id="revenueChartBars"></div>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom: 20px;">
+        <div class="card-title">📈 분기별 영업이익</div>
+        <div class="chart-container">
+          <div class="chart-bars" id="profitChartBars"></div>
         </div>
         <div class="qoq-table-container" id="qoqTableContainer"></div>
         <div class="annual-table-container" id="annualTableContainer" style="margin-top: 24px;"></div>
@@ -429,45 +431,59 @@ const indexHtml = `<!DOCTYPE html>
     }
 
     async function loadFinancialData(corpCode) {
-      const chartBars = document.getElementById('chartBars');
-      chartBars.innerHTML = '<div class="loading"><div class="spinner"></div>재무 데이터 로딩 중...</div>';
+      const revenueChartBars = document.getElementById('revenueChartBars');
+      const profitChartBars = document.getElementById('profitChartBars');
+      revenueChartBars.innerHTML = '<div class="loading"><div class="spinner"></div>재무 데이터 로딩 중...</div>';
+      profitChartBars.innerHTML = '<div class="loading"><div class="spinner"></div>재무 데이터 로딩 중...</div>';
       try {
         const res = await fetch(API_BASE + '/companies/' + corpCode + '/financial');
         const data = await res.json();
         if (data.chartData && data.chartData.length > 0) {
           renderChart(data.chartData);
         } else {
-          chartBars.innerHTML = '<div class="loading">재무 데이터가 없습니다</div>';
+          revenueChartBars.innerHTML = '<div class="loading">재무 데이터가 없습니다</div>';
+          profitChartBars.innerHTML = '<div class="loading">재무 데이터가 없습니다</div>';
         }
       } catch (err) {
         console.error('Financial data error:', err);
-        chartBars.innerHTML = '<div class="loading">재무 데이터를 불러올 수 없습니다</div>';
+        revenueChartBars.innerHTML = '<div class="loading">재무 데이터를 불러올 수 없습니다</div>';
+        profitChartBars.innerHTML = '<div class="loading">재무 데이터를 불러올 수 없습니다</div>';
       }
     }
 
     function renderChart(chartData) {
-      const chartBars = document.getElementById('chartBars');
+      const revenueChartBars = document.getElementById('revenueChartBars');
+      const profitChartBars = document.getElementById('profitChartBars');
       
       // 차트에는 최근 6분기만 표시
       const recentData = chartData.slice(-6);
       
-      // 모든 값을 억 원 단위로 변환하여 스케일 통일
-      const allValues = recentData.flatMap(d => [
-        toHundredMillion(d.revenue), 
-        toHundredMillion(d.operatingProfit)
-      ]);
-      const maxValue = Math.max(...allValues.filter(v => v > 0));
+      // 매출액 차트 - 자체 스케일
+      const revenueValues = recentData.map(d => toHundredMillion(d.revenue));
+      const maxRevenue = Math.max(...revenueValues.filter(v => v > 0));
       
-      chartBars.innerHTML = recentData.map(d => {
+      revenueChartBars.innerHTML = recentData.map(d => {
         const revenueNorm = toHundredMillion(d.revenue);
-        const opNorm = toHundredMillion(Math.abs(d.operatingProfit));
-        
-        const revenueHeight = maxValue > 0 ? (revenueNorm / maxValue) * 180 : 0;
-        const opHeight = maxValue > 0 ? (opNorm / maxValue) * 180 : 0;
+        const revenueHeight = maxRevenue > 0 ? (revenueNorm / maxRevenue) * 180 : 0;
         
         return '<div class="chart-group">' +
           '<div class="chart-bar-wrapper">' +
           '<div class="chart-bar revenue" style="height: ' + Math.max(revenueHeight, 4) + 'px" title="매출액: ' + formatKoreanCurrency(d.revenue) + '"></div>' +
+          '</div>' +
+          '<div class="chart-label">' + d.quarter + '</div>' +
+          '</div>';
+      }).join('');
+      
+      // 영업이익 차트 - 자체 스케일
+      const profitValues = recentData.map(d => toHundredMillion(Math.abs(d.operatingProfit)));
+      const maxProfit = Math.max(...profitValues.filter(v => v > 0));
+      
+      profitChartBars.innerHTML = recentData.map(d => {
+        const opNorm = toHundredMillion(Math.abs(d.operatingProfit));
+        const opHeight = maxProfit > 0 ? (opNorm / maxProfit) * 180 : 0;
+        
+        return '<div class="chart-group">' +
+          '<div class="chart-bar-wrapper">' +
           '<div class="chart-bar operating" style="height: ' + Math.max(opHeight, 4) + 'px" title="영업이익: ' + formatKoreanCurrency(d.operatingProfit) + '"></div>' +
           '</div>' +
           '<div class="chart-label">' + d.quarter + '</div>' +
