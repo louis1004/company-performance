@@ -12,7 +12,7 @@ import { getSearchService } from '../services/search-service';
 import { getLast6Quarters, calculateQoQChanges, processFinancialData } from '../processors/financial-processor';
 import { calculateAllRatios } from '../processors/ratio-calculator';
 import { scrapeNews } from '../scrapers/news-scraper';
-import { getCurrentPrice, formatStockPrice } from '../providers/stock-price-provider';
+import { getCurrentPrice, formatStockPrice, getStockData } from '../providers/stock-price-provider';
 import { handleError, ERROR_MESSAGES } from '../utils/error-handler';
 
 const api = new Hono<{ Bindings: Env }>();
@@ -110,8 +110,8 @@ api.get('/companies/:corpCode/financial', async (c) => {
       'Q1': '11013', 'Q2': '11012', 'Q3': '11014', 'Q4': '11011'
     };
     
-    // 최근 3년간 모든 분기 데이터 가져오기 (누적값 계산용)
-    const yearsToFetch = [currentYear - 2, currentYear - 1, currentYear];
+    // 최근 4년간 모든 분기 데이터 가져오기 (3개년 연간 실적 + 누적값 계산용)
+    const yearsToFetch = [currentYear - 3, currentYear - 2, currentYear - 1, currentYear];
     const quartersToFetch = ['Q1', 'Q2', 'Q3', 'Q4'];
     
     for (const year of yearsToFetch) {
@@ -134,8 +134,8 @@ api.get('/companies/:corpCode/financial', async (c) => {
     const processed = processFinancialData(statements);
     const qoqData = calculateQoQChanges(processed);
     
-    // 최근 6개 분기만 반환
-    const maxQuarters = 6;
+    // 최근 12개 분기 (3년치) 반환
+    const maxQuarters = 12;
     const startIdx = Math.max(0, qoqData.quarters.length - maxQuarters);
     
     const chartData = qoqData.quarters.slice(startIdx).map((q, i) => ({
@@ -165,7 +165,7 @@ api.get('/companies/:corpCode/financial', async (c) => {
 
 /**
  * Financial ratios endpoint - GET /api/companies/{corpCode}/ratios
- * 최근 4개 분기 데이터를 합산하여 TTM(Trailing Twelve Months) 기준으로 계산
+ * 네이버 증권에서 투자 지표 가져오기 (PER, PBR, ROE, 배당수익률)
  */
 api.get('/companies/:corpCode/ratios', async (c) => {
   const corpCode = c.req.param('corpCode');
@@ -173,53 +173,33 @@ api.get('/companies/:corpCode/ratios', async (c) => {
   
   try {
     const companyInfo = await dartClient.getCompanyInfo(corpCode);
-    const stockPrice = await getCurrentPrice(companyInfo.stockCode);
     
-    // 최근 4개 분기 원시 데이터 가져오기
-    const ttmData = await dartClient.getTTMFinancialData(corpCode);
+    // 네이버 증권에서 모든 투자 지표 가져오기
+    const stockData = await getStockData(companyInfo.stockCode);
+    const { price: stockPrice, sharesOutstanding, dividendYield, per, pbr, roe, eps, high52w, low52w } = stockData;
     
-    if (!ttmData || ttmData.quarters.length === 0) {
-      return c.json({
-        ratios: { eps: null, per: null, pbr: null, roa: null, roe: null },
-        calculatedAt: new Date().toISOString(),
-        message: '재무비율 데이터를 찾을 수 없습니다.'
-      });
-    }
-    
-    const { revenue, operatingProfit, netIncome, totalAssets, totalEquity, totalShares } = ttmData;
-    
-    // 비율 직접 계산
-    const eps = totalShares > 0 ? Math.round(netIncome / totalShares) : null;
-    const bps = totalShares > 0 ? Math.round(totalEquity / totalShares) : null;
-    const per = eps && eps > 0 ? parseFloat((stockPrice / eps).toFixed(2)) : null;
-    const pbr = bps && bps > 0 ? parseFloat((stockPrice / bps).toFixed(2)) : null;
-    const roa = totalAssets > 0 ? parseFloat(((netIncome / totalAssets) * 100).toFixed(2)) : null;
-    const roe = totalEquity > 0 ? parseFloat(((netIncome / totalEquity) * 100).toFixed(2)) : null;
-    const operatingMargin = revenue > 0 ? parseFloat(((operatingProfit / revenue) * 100).toFixed(2)) : null;
-    const netMargin = revenue > 0 ? parseFloat(((netIncome / revenue) * 100).toFixed(2)) : null;
-    const marketCap = totalShares > 0 ? stockPrice * totalShares : null;
+    // 시가총액 계산
+    const marketCap = sharesOutstanding > 0 && stockPrice > 0 ? stockPrice * sharesOutstanding : null;
     
     return c.json({
-      ratios: { eps, per, pbr, roa, roe, operatingMargin, netMargin },
-      financials: {
-        revenue,
-        operatingProfit,
-        netIncome,
-        totalAssets,
-        totalEquity
+      ratios: { 
+        per: per > 0 ? per : null, 
+        pbr: pbr > 0 ? pbr : null, 
+        roe: roe > 0 ? roe : null, 
+        dividendYield: dividendYield > 0 ? dividendYield : null,
+        eps: eps > 0 ? eps : null,
+        high52w: high52w > 0 ? high52w : null,
+        low52w: low52w > 0 ? low52w : null
       },
-      period: 'TTM',
-      quarters: ttmData.quarters,
       stockPrice,
       marketCap,
-      bps,
-      totalShares,
+      totalShares: sharesOutstanding,
       calculatedAt: new Date().toISOString()
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return c.json({
-      ratios: { eps: null, per: null, pbr: null, roa: null, roe: null },
+      ratios: { per: null, pbr: null, roe: null, dividendYield: null, eps: null, high52w: null, low52w: null },
       calculatedAt: new Date().toISOString(),
       message: '재무비율 데이터를 계산할 수 없습니다.',
       error: errorMessage

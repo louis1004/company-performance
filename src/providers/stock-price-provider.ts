@@ -1,15 +1,30 @@
 /**
  * Stock Price Provider
  * 
- * Retrieve current stock price for a company.
+ * Retrieve current stock price and shares outstanding for a company.
  */
 
 const NAVER_FINANCE_URL = 'https://finance.naver.com/item/main.naver';
 
 /**
- * Get current stock price from Naver Finance
+ * Stock data from Naver Finance
  */
-export async function getCurrentPrice(stockCode: string): Promise<number> {
+export interface StockData {
+  price: number;
+  sharesOutstanding: number;
+  dividendYield: number;
+  per: number;
+  pbr: number;
+  roe: number;
+  eps: number;
+  high52w: number;
+  low52w: number;
+}
+
+/**
+ * Get current stock price and shares outstanding from Naver Finance
+ */
+export async function getStockData(stockCode: string): Promise<StockData> {
   try {
     const url = new URL(NAVER_FINANCE_URL);
     url.searchParams.set('code', stockCode);
@@ -23,14 +38,32 @@ export async function getCurrentPrice(stockCode: string): Promise<number> {
     });
     
     if (!response.ok) {
-      return 0;
+      return { price: 0, sharesOutstanding: 0 };
     }
     
     const html = await response.text();
-    return parseStockPrice(html);
+    return {
+      price: parseStockPrice(html),
+      sharesOutstanding: parseSharesOutstanding(html),
+      dividendYield: parseDividendYield(html),
+      per: parsePER(html),
+      pbr: parsePBR(html),
+      roe: parseROE(html),
+      eps: parseEPS(html),
+      high52w: parse52wHigh(html),
+      low52w: parse52wLow(html)
+    };
   } catch (error) {
-    return 0;
+    return { price: 0, sharesOutstanding: 0, dividendYield: 0, per: 0, pbr: 0, roe: 0, eps: 0, high52w: 0, low52w: 0 };
   }
+}
+
+/**
+ * Get current stock price from Naver Finance (legacy function)
+ */
+export async function getCurrentPrice(stockCode: string): Promise<number> {
+  const data = await getStockData(stockCode);
+  return data.price;
 }
 
 /**
@@ -59,6 +92,126 @@ function parseStockPrice(html: string): number {
 }
 
 /**
+ * Parse shares outstanding from Naver Finance HTML
+ */
+function parseSharesOutstanding(html: string): number {
+  // Pattern: <th scope="row">상장주식수</th> ... <td><em>5,919,637,922</em></td>
+  const pattern = /상장주식수[\s\S]*?<td><em>([\d,]+)<\/em>/;
+  const match = html.match(pattern);
+  
+  if (match) {
+    return parseInt(match[1].replace(/,/g, ''), 10);
+  }
+  
+  return 0;
+}
+
+/**
+ * Parse dividend yield from Naver Finance HTML
+ */
+function parseDividendYield(html: string): number {
+  // Pattern: id="_dvr">1.00</em>%
+  const pattern = /id="_dvr">([0-9.]+)/;
+  const match = html.match(pattern);
+  
+  if (match) {
+    return parseFloat(match[1]);
+  }
+  
+  return 0;
+}
+
+/**
+ * Parse PER from Naver Finance HTML
+ */
+function parsePER(html: string): number {
+  const pattern = /id="_per">([0-9.]+)/;
+  const match = html.match(pattern);
+  
+  if (match) {
+    return parseFloat(match[1]);
+  }
+  
+  return 0;
+}
+
+/**
+ * Parse PBR from Naver Finance HTML
+ */
+function parsePBR(html: string): number {
+  const pattern = /id="_pbr">([0-9.]+)/;
+  const match = html.match(pattern);
+  
+  if (match) {
+    return parseFloat(match[1]);
+  }
+  
+  return 0;
+}
+
+/**
+ * Parse ROE from Naver Finance HTML
+ */
+function parseROE(html: string): number {
+  // ROE is in table with class th_cop_anal13
+  const noNewlines = html.replace(/\n/g, '');
+  const pattern = /th_cop_anal13[^<]*<[^>]*>[^<]*<\/[^>]*>[\s\S]*?<td[^>]*>\s*([-0-9.]+)/;
+  const match = noNewlines.match(pattern);
+  
+  if (match) {
+    return parseFloat(match[1]);
+  }
+  
+  return 0;
+}
+
+/**
+ * Parse EPS from Naver Finance HTML
+ */
+function parseEPS(html: string): number {
+  const pattern = /id="_eps">([0-9,]+)/;
+  const match = html.match(pattern);
+  
+  if (match) {
+    return parseInt(match[1].replace(/,/g, ''), 10);
+  }
+  
+  return 0;
+}
+
+/**
+ * Parse 52-week high from Naver Finance HTML
+ */
+function parse52wHigh(html: string): number {
+  // Pattern: 52주최고 ... <em>169,400</em>
+  const noNewlines = html.replace(/\n/g, '');
+  const pattern = /52주최고[\s\S]*?<td>[\s\S]*?<em>([0-9,]+)<\/em>/;
+  const match = noNewlines.match(pattern);
+  
+  if (match) {
+    return parseInt(match[1].replace(/,/g, ''), 10);
+  }
+  
+  return 0;
+}
+
+/**
+ * Parse 52-week low from Naver Finance HTML
+ */
+function parse52wLow(html: string): number {
+  // Pattern: 52주최고 ... <em>169,400</em> ... <em>52,500</em>
+  const noNewlines = html.replace(/\n/g, '');
+  const pattern = /52주최고[\s\S]*?<td>[\s\S]*?<em>[0-9,]+<\/em>[\s\S]*?<em>([0-9,]+)<\/em>/;
+  const match = noNewlines.match(pattern);
+  
+  if (match) {
+    return parseInt(match[1].replace(/,/g, ''), 10);
+  }
+  
+  return 0;
+}
+
+/**
  * Format stock price with thousand separators
  */
 export function formatStockPrice(price: number): string {
@@ -72,15 +225,17 @@ export function formatStockPrice(price: number): string {
 export interface StockPriceInfo {
   price: number;
   formattedPrice: string;
+  sharesOutstanding: number;
   change?: number;
   changePercent?: number;
 }
 
 export async function getStockPriceInfo(stockCode: string): Promise<StockPriceInfo> {
-  const price = await getCurrentPrice(stockCode);
+  const data = await getStockData(stockCode);
   
   return {
-    price,
-    formattedPrice: formatStockPrice(price)
+    price: data.price,
+    formattedPrice: formatStockPrice(data.price),
+    sharesOutstanding: data.sharesOutstanding
   };
 }
