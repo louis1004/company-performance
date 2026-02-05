@@ -21,16 +21,42 @@ const indexHtml = `<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>기업 실적 조회 서비스</title>
   <style>
+    /* CSS 변수 기반 다크모드 (기본 테마) */
+    :root {
+      --bg-primary: #1a1a2e;
+      --bg-secondary: #16213e;
+      --bg-card: #1e2a4a;
+      --bg-input: #0f1629;
+      --text-primary: #e4e4e4;
+      --text-secondary: #a0a0a0;
+      --text-muted: #6b7280;
+      --accent-color: #7c8cff;
+      --accent-secondary: #48bb78;
+      --accent-tertiary: #ed8936;
+      --border-color: #2d3748;
+      --card-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      --chart-revenue: #7c8cff;
+      --chart-operating: #48bb78;
+      --chart-net: #ed8936;
+      --positive-color: #fc8181;
+      --negative-color: #63b3ed;
+      --header-gradient: linear-gradient(135deg, #4c5fd5 0%, #6b46c1 100%);
+      --hover-bg: #2d3a5a;
+      --table-header-bg: #1e2a4a;
+      --spinner-bg: #2d3748;
+    }
+    
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #f5f7fa;
-      color: #333;
+      background: var(--bg-primary);
+      color: var(--text-primary);
       line-height: 1.6;
+      transition: background-color 0.3s, color 0.3s;
     }
     .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
     header {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: var(--header-gradient);
       color: white;
       padding: 30px 20px;
       text-align: center;
@@ -48,21 +74,24 @@ const indexHtml = `<!DOCTYPE html>
       width: 100%;
       padding: 15px 20px;
       font-size: 1rem;
-      border: 2px solid #e1e5eb;
+      border: 2px solid var(--border-color);
       border-radius: 10px;
       outline: none;
-      transition: border-color 0.2s;
+      transition: border-color 0.2s, background-color 0.3s;
+      background: var(--bg-input);
+      color: var(--text-primary);
     }
-    .search-box input:focus { border-color: #667eea; }
+    .search-box input::placeholder { color: var(--text-muted); }
+    .search-box input:focus { border-color: var(--accent-color); }
     .autocomplete {
       position: absolute;
       top: 100%;
       left: 0;
       right: 0;
-      background: white;
-      border: 1px solid #e1e5eb;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
       border-radius: 8px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      box-shadow: var(--card-shadow);
       max-height: 300px;
       overflow-y: auto;
       z-index: 100;
@@ -72,43 +101,47 @@ const indexHtml = `<!DOCTYPE html>
     .autocomplete-item {
       padding: 12px 16px;
       cursor: pointer;
-      border-bottom: 1px solid #f0f0f0;
+      border-bottom: 1px solid var(--border-color);
+      transition: background-color 0.2s;
     }
-    .autocomplete-item:hover { background: #f5f7fa; }
+    .autocomplete-item:hover { background: var(--hover-bg); }
     .autocomplete-item:last-child { border-bottom: none; }
-    .company-name { font-weight: 600; }
-    .company-meta { font-size: 0.85rem; color: #666; }
+    .company-name { font-weight: 600; color: var(--text-primary); }
+    .company-meta { font-size: 0.85rem; color: var(--text-secondary); }
     .company-header {
-      background: white;
+      background: var(--bg-card);
       padding: 24px;
       border-radius: 12px;
       margin-bottom: 20px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+      box-shadow: var(--card-shadow);
       display: none;
+      border: 1px solid var(--border-color);
     }
     .company-header.show { display: block; }
-    .company-title { font-size: 1.5rem; font-weight: 700; }
+    .company-title { font-size: 1.5rem; font-weight: 700; color: var(--text-primary); }
     .stock-price {
       font-size: 1.8rem;
       font-weight: 700;
-      color: #667eea;
+      color: var(--accent-color);
       margin-top: 8px;
     }
-    .company-info { color: #666; margin-top: 4px; }
+    .company-info { color: var(--text-secondary); margin-top: 4px; }
     .grid { display: grid; gap: 20px; }
     .grid-2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
     .card {
-      background: white;
+      background: var(--bg-card);
       border-radius: 12px;
       padding: 20px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+      box-shadow: var(--card-shadow);
+      border: 1px solid var(--border-color);
     }
     .card-title {
       font-size: 1.1rem;
       font-weight: 600;
       margin-bottom: 16px;
       padding-bottom: 12px;
-      border-bottom: 2px solid #f0f0f0;
+      border-bottom: 2px solid var(--border-color);
+      color: var(--text-primary);
     }
     .chart-container { height: 300px; position: relative; }
     .chart-bars {
@@ -129,28 +162,34 @@ const indexHtml = `<!DOCTYPE html>
     .chart-bar {
       width: 20px;
       border-radius: 4px 4px 0 0;
-      transition: height 0.3s;
+      transition: height 0.6s ease-out, opacity 0.3s ease, transform 0.2s ease;
       cursor: pointer;
+      transform-origin: bottom;
     }
-    .chart-bar.revenue { background: #667eea; }
-    .chart-bar.operating { background: #48bb78; }
-    .chart-bar.net { background: #ed8936; }
-    .chart-label { font-size: 0.75rem; color: #666; margin-top: 8px; }
+    .chart-bar:hover {
+      opacity: 0.8;
+      transform: scaleY(1.02);
+    }
+    .chart-bar.revenue { background: var(--chart-revenue); }
+    .chart-bar.operating { background: var(--chart-operating); }
+    .chart-bar.net { background: var(--chart-net); }
+    .chart-label { font-size: 0.75rem; color: var(--text-secondary); margin-top: 8px; }
     .chart-legend {
       display: flex;
       justify-content: center;
       gap: 20px;
       margin-top: 16px;
       font-size: 0.85rem;
+      color: var(--text-secondary);
     }
     .legend-item { display: flex; align-items: center; gap: 6px; }
     .legend-dot { width: 12px; height: 12px; border-radius: 3px; }
     .qoq-chart-container { padding: 10px 0; }
     #qoqChart { display: block; margin: 0 auto; }
-    .qoq-label { font-size: 11px; fill: #666; }
+    .qoq-label { font-size: 11px; fill: var(--text-secondary); }
     .qoq-value { font-size: 10px; font-weight: 600; }
-    .qoq-value.positive { fill: #e53e3e; }
-    .qoq-value.negative { fill: #3182ce; }
+    .qoq-value.positive { fill: var(--positive-color); }
+    .qoq-value.negative { fill: var(--negative-color); }
     .qoq-table-container { margin-top: 20px; overflow-x: auto; }
     .qoq-table {
       width: 100%;
@@ -160,53 +199,81 @@ const indexHtml = `<!DOCTYPE html>
     .qoq-table th, .qoq-table td {
       padding: 10px 8px;
       text-align: center;
-      border-bottom: 1px solid #e1e5eb;
+      border-bottom: 1px solid var(--border-color);
+      color: var(--text-primary);
     }
     .qoq-table th {
-      background: #f5f7fa;
+      background: var(--table-header-bg);
       font-weight: 600;
-      color: #555;
+      color: var(--text-secondary);
     }
     .qoq-table th:first-child, .qoq-table td:first-child {
       text-align: left;
       font-weight: 500;
     }
-    .qoq-table .positive { color: #e53e3e; }
-    .qoq-table .negative { color: #3182ce; }
-    .qoq-table .metric-revenue { border-left: 3px solid #667eea; }
-    .qoq-table .metric-op { border-left: 3px solid #48bb78; }
-    .qoq-table .metric-net { border-left: 3px solid #ed8936; }
+    .qoq-table .positive { color: var(--positive-color); }
+    .qoq-table .negative { color: var(--negative-color); }
+    .qoq-table .metric-revenue { border-left: 3px solid var(--chart-revenue); }
+    .qoq-table .metric-op { border-left: 3px solid var(--chart-operating); }
+    .qoq-table .metric-net { border-left: 3px solid var(--chart-net); }
     .ratios-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
       gap: 16px;
     }
     .ratio-item { text-align: center; }
-    .ratio-value { font-size: 1.4rem; font-weight: 700; color: #667eea; }
-    .ratio-label { font-size: 0.85rem; color: #666; margin-top: 4px; }
+    .ratio-value { font-size: 1.4rem; font-weight: 700; color: var(--accent-color); }
+    .ratio-label { 
+      font-size: 0.85rem; 
+      color: var(--text-secondary); 
+      margin-top: 4px;
+      cursor: default;
+    }
+    .ratio-label[title] { cursor: help; }
+    
+    /* 재무비율 카테고리 스타일 */
+    .ratio-category {
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border-color);
+    }
+    .ratio-category:last-child {
+      margin-bottom: 0;
+      padding-bottom: 0;
+      border-bottom: none;
+    }
+    .ratio-category-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+    }
     .list-item {
       padding: 12px 0;
-      border-bottom: 1px solid #f0f0f0;
+      border-bottom: 1px solid var(--border-color);
     }
     .list-item:last-child { border-bottom: none; }
     .list-item a {
-      color: #333;
+      color: var(--text-primary);
       text-decoration: none;
       display: block;
+      transition: color 0.2s;
     }
-    .list-item a:hover { color: #667eea; }
+    .list-item a:hover { color: var(--accent-color); }
     .list-title { font-weight: 500; margin-bottom: 4px; }
-    .list-meta { font-size: 0.85rem; color: #888; }
+    .list-meta { font-size: 0.85rem; color: var(--text-muted); }
     .loading {
       text-align: center;
       padding: 40px;
-      color: #888;
+      color: var(--text-muted);
     }
     .spinner {
       width: 40px;
       height: 40px;
-      border: 3px solid #f0f0f0;
-      border-top-color: #667eea;
+      border: 3px solid var(--spinner-bg);
+      border-top-color: var(--accent-color);
       border-radius: 50%;
       animation: spin 1s linear infinite;
       margin: 0 auto 16px;
@@ -215,9 +282,56 @@ const indexHtml = `<!DOCTYPE html>
     .empty-state {
       text-align: center;
       padding: 60px 20px;
-      color: #888;
+      color: var(--text-muted);
     }
-    .empty-state h2 { font-size: 1.2rem; margin-bottom: 8px; color: #666; }
+    .empty-state h2 { font-size: 1.2rem; margin-bottom: 8px; color: var(--text-secondary); }
+    
+    /* 차트 애니메이션 */
+    @keyframes barGrow {
+      from { transform: scaleY(0); }
+      to { transform: scaleY(1); }
+    }
+    .chart-bar.animate {
+      animation: barGrow 0.6s ease-out forwards;
+    }
+    
+    /* 차트 툴팁 */
+    .chart-tooltip {
+      position: fixed;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 10px 14px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      z-index: 1000;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+      font-size: 0.85rem;
+      max-width: 200px;
+    }
+    .chart-tooltip.show { opacity: 1; }
+    .chart-tooltip .tooltip-title {
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+    .chart-tooltip .tooltip-value {
+      color: var(--accent-color);
+      font-weight: 700;
+      font-size: 1.1rem;
+    }
+    .chart-tooltip .tooltip-change {
+      font-size: 0.8rem;
+      margin-top: 4px;
+    }
+    .chart-tooltip .tooltip-change.positive { color: var(--positive-color); }
+    .chart-tooltip .tooltip-change.negative { color: var(--negative-color); }
+    
+    /* 영업이익 양수/음수 구분 */
+    .chart-bar.operating.negative-value {
+      background: var(--negative-color);
+    }
     
     /* Mobile Responsive */
     @media (max-width: 768px) {
@@ -226,14 +340,14 @@ const indexHtml = `<!DOCTYPE html>
       header h1 { font-size: 1.4rem; }
       header p { font-size: 0.85rem; }
       .search-box { margin-bottom: 20px; }
-      .search-box input { padding: 12px 16px; font-size: 16px; }
+      .search-box input { padding: 12px 16px; font-size: 16px; min-height: 48px; }
       .company-header { padding: 16px; }
       .company-title { font-size: 1.2rem; }
       .stock-price { font-size: 1.4rem; }
       .card { padding: 16px; border-radius: 8px; }
       .card-title { font-size: 1rem; margin-bottom: 12px; padding-bottom: 8px; }
-      .chart-container { height: 250px; }
-      .chart-bars { height: 200px; }
+      .chart-container { height: 250px; overflow-x: auto; }
+      .chart-bars { height: 200px; min-width: 100%; }
       .chart-bar-wrapper { height: 160px; }
       .chart-bar { width: 14px; }
       .chart-legend { gap: 12px; font-size: 0.75rem; flex-wrap: wrap; }
@@ -242,12 +356,14 @@ const indexHtml = `<!DOCTYPE html>
       .ratio-value { font-size: 1.1rem; }
       .ratio-label { font-size: 0.75rem; }
       .grid-2 { grid-template-columns: 1fr; }
-      .list-item { padding: 10px 0; }
+      .list-item { padding: 10px 0; min-height: 44px; }
       .list-title { font-size: 0.9rem; line-height: 1.4; }
       .list-meta { font-size: 0.75rem; }
       .empty-state { padding: 40px 16px; }
       .empty-state h2 { font-size: 1rem; }
       .empty-state p { font-size: 0.9rem; }
+      .autocomplete-item { min-height: 44px; padding: 14px 16px; }
+      .qoq-table-container { overflow-x: auto; -webkit-overflow-scrolling: touch; }
     }
     
     @media (max-width: 480px) {
@@ -261,6 +377,13 @@ const indexHtml = `<!DOCTYPE html>
 </head>
 <body>
   <div class="container">
+    <!-- 차트 툴팁 -->
+    <div class="chart-tooltip" id="chartTooltip">
+      <div class="tooltip-title"></div>
+      <div class="tooltip-value"></div>
+      <div class="tooltip-change"></div>
+    </div>
+    
     <header>
       <h1>📊 기업 실적 조회 서비스</h1>
       <p>KOSPI · KOSDAQ 상장 기업의 재무 데이터를 한눈에</p>
@@ -295,15 +418,44 @@ const indexHtml = `<!DOCTYPE html>
       </div>
       <div class="card" style="margin-bottom: 20px;">
         <div class="card-title">📊 주요 재무비율</div>
-        <div class="ratios-grid" id="ratiosGrid">
-          <div class="ratio-item"><div class="ratio-value" id="ratioMarketCap">-</div><div class="ratio-label">시가총액</div></div>
-          <div class="ratio-item"><div class="ratio-value" id="ratioDividend">-</div><div class="ratio-label">배당수익률</div></div>
-          <div class="ratio-item"><div class="ratio-value" id="ratioPER">-</div><div class="ratio-label">PER</div></div>
-          <div class="ratio-item"><div class="ratio-value" id="ratioPBR">-</div><div class="ratio-label">PBR</div></div>
-          <div class="ratio-item"><div class="ratio-value" id="ratioROE">-</div><div class="ratio-label">ROE</div></div>
-          <div class="ratio-item"><div class="ratio-value" id="ratioEPS">-</div><div class="ratio-label">EPS</div></div>
-          <div class="ratio-item"><div class="ratio-value" id="ratio52wHigh">-</div><div class="ratio-label">52주 최고</div></div>
-          <div class="ratio-item"><div class="ratio-value" id="ratio52wLow">-</div><div class="ratio-label">52주 최저</div></div>
+        
+        <!-- 가치평가 지표 -->
+        <div class="ratio-category">
+          <div class="ratio-category-title">가치평가</div>
+          <div class="ratios-grid" id="ratiosGrid">
+            <div class="ratio-item"><div class="ratio-value" id="ratioMarketCap">-</div><div class="ratio-label">시가총액</div></div>
+            <div class="ratio-item"><div class="ratio-value" id="ratioPER">-</div><div class="ratio-label">PER</div></div>
+            <div class="ratio-item"><div class="ratio-value" id="ratioPBR">-</div><div class="ratio-label">PBR</div></div>
+            <div class="ratio-item"><div class="ratio-value" id="ratioEPS">-</div><div class="ratio-label">EPS</div></div>
+          </div>
+        </div>
+        
+        <!-- 수익성 지표 -->
+        <div class="ratio-category">
+          <div class="ratio-category-title">수익성</div>
+          <div class="ratios-grid">
+            <div class="ratio-item"><div class="ratio-value" id="ratioROE">-</div><div class="ratio-label">ROE</div></div>
+            <div class="ratio-item"><div class="ratio-value" id="ratioOperatingMargin">-</div><div class="ratio-label">영업이익률</div></div>
+            <div class="ratio-item"><div class="ratio-value" id="ratioDividend">-</div><div class="ratio-label">배당수익률</div></div>
+          </div>
+        </div>
+        
+        <!-- 안정성 지표 -->
+        <div class="ratio-category">
+          <div class="ratio-category-title">안정성</div>
+          <div class="ratios-grid">
+            <div class="ratio-item"><div class="ratio-value" id="ratioDebtRatio">-</div><div class="ratio-label">부채비율</div></div>
+            <div class="ratio-item"><div class="ratio-value" id="ratioCurrentRatio">-</div><div class="ratio-label">당좌비율</div></div>
+          </div>
+        </div>
+        
+        <!-- 주가 정보 -->
+        <div class="ratio-category">
+          <div class="ratio-category-title">주가 정보</div>
+          <div class="ratios-grid">
+            <div class="ratio-item"><div class="ratio-value" id="ratio52wHigh">-</div><div class="ratio-label">52주 최고</div></div>
+            <div class="ratio-item"><div class="ratio-value" id="ratio52wLow">-</div><div class="ratio-label">52주 최저</div></div>
+          </div>
         </div>
       </div>
       <div class="grid grid-2">
@@ -454,41 +606,112 @@ const indexHtml = `<!DOCTYPE html>
     function renderChart(chartData) {
       const revenueChartBars = document.getElementById('revenueChartBars');
       const profitChartBars = document.getElementById('profitChartBars');
+      const tooltip = document.getElementById('chartTooltip');
       
       // 차트에는 최근 6분기만 표시
       const recentData = chartData.slice(-6);
+      
+      // QoQ 계산 (툴팁용)
+      const qoqData = [];
+      for (let i = 0; i < recentData.length; i++) {
+        if (i === 0) {
+          qoqData.push({ revenueQoQ: null, opQoQ: null });
+        } else {
+          const prev = recentData[i - 1];
+          const curr = recentData[i];
+          qoqData.push({
+            revenueQoQ: prev.revenue !== 0 ? ((curr.revenue - prev.revenue) / Math.abs(prev.revenue)) * 100 : null,
+            opQoQ: prev.operatingProfit !== 0 ? ((curr.operatingProfit - prev.operatingProfit) / Math.abs(prev.operatingProfit)) * 100 : null
+          });
+        }
+      }
+      
+      // 툴팁 표시 함수
+      function showTooltip(e, title, value, change) {
+        const tooltipTitle = tooltip.querySelector('.tooltip-title');
+        const tooltipValue = tooltip.querySelector('.tooltip-value');
+        const tooltipChange = tooltip.querySelector('.tooltip-change');
+        
+        tooltipTitle.textContent = title;
+        tooltipValue.textContent = value;
+        
+        if (change !== null && change !== undefined) {
+          const sign = change >= 0 ? '+' : '';
+          tooltipChange.textContent = 'QoQ: ' + sign + change.toFixed(1) + '%';
+          tooltipChange.className = 'tooltip-change ' + (change >= 0 ? 'positive' : 'negative');
+          tooltipChange.style.display = 'block';
+        } else {
+          tooltipChange.style.display = 'none';
+        }
+        
+        tooltip.style.left = (e.clientX + 10) + 'px';
+        tooltip.style.top = (e.clientY - 10) + 'px';
+        tooltip.classList.add('show');
+      }
+      
+      function hideTooltip() {
+        tooltip.classList.remove('show');
+      }
       
       // 매출액 차트 - 자체 스케일
       const revenueValues = recentData.map(d => toHundredMillion(d.revenue));
       const maxRevenue = Math.max(...revenueValues.filter(v => v > 0));
       
-      revenueChartBars.innerHTML = recentData.map(d => {
+      revenueChartBars.innerHTML = recentData.map((d, i) => {
         const revenueNorm = toHundredMillion(d.revenue);
         const revenueHeight = maxRevenue > 0 ? (revenueNorm / maxRevenue) * 180 : 0;
         
         return '<div class="chart-group">' +
           '<div class="chart-bar-wrapper">' +
-          '<div class="chart-bar revenue" style="height: ' + Math.max(revenueHeight, 4) + 'px" title="매출액: ' + formatKoreanCurrency(d.revenue) + '"></div>' +
+          '<div class="chart-bar revenue animate" data-index="' + i + '" data-type="revenue" style="height: ' + Math.max(revenueHeight, 4) + 'px; animation-delay: ' + (i * 0.1) + 's"></div>' +
           '</div>' +
           '<div class="chart-label">' + d.quarter + '</div>' +
           '</div>';
       }).join('');
       
-      // 영업이익 차트 - 자체 스케일
+      // 영업이익 차트 - 자체 스케일 (양수/음수 구분)
       const profitValues = recentData.map(d => toHundredMillion(Math.abs(d.operatingProfit)));
       const maxProfit = Math.max(...profitValues.filter(v => v > 0));
       
-      profitChartBars.innerHTML = recentData.map(d => {
+      profitChartBars.innerHTML = recentData.map((d, i) => {
         const opNorm = toHundredMillion(Math.abs(d.operatingProfit));
         const opHeight = maxProfit > 0 ? (opNorm / maxProfit) * 180 : 0;
+        const isNegative = d.operatingProfit < 0;
         
         return '<div class="chart-group">' +
           '<div class="chart-bar-wrapper">' +
-          '<div class="chart-bar operating" style="height: ' + Math.max(opHeight, 4) + 'px" title="영업이익: ' + formatKoreanCurrency(d.operatingProfit) + '"></div>' +
+          '<div class="chart-bar operating animate' + (isNegative ? ' negative-value' : '') + '" data-index="' + i + '" data-type="profit" style="height: ' + Math.max(opHeight, 4) + 'px; animation-delay: ' + (i * 0.1) + 's"></div>' +
           '</div>' +
           '<div class="chart-label">' + d.quarter + '</div>' +
           '</div>';
       }).join('');
+      
+      // 툴팁 이벤트 바인딩
+      revenueChartBars.querySelectorAll('.chart-bar').forEach(bar => {
+        const idx = parseInt(bar.dataset.index);
+        const d = recentData[idx];
+        bar.addEventListener('mouseenter', (e) => {
+          showTooltip(e, d.quarter + ' 매출액', formatKoreanCurrency(d.revenue), qoqData[idx].revenueQoQ);
+        });
+        bar.addEventListener('mousemove', (e) => {
+          tooltip.style.left = (e.clientX + 10) + 'px';
+          tooltip.style.top = (e.clientY - 10) + 'px';
+        });
+        bar.addEventListener('mouseleave', hideTooltip);
+      });
+      
+      profitChartBars.querySelectorAll('.chart-bar').forEach(bar => {
+        const idx = parseInt(bar.dataset.index);
+        const d = recentData[idx];
+        bar.addEventListener('mouseenter', (e) => {
+          showTooltip(e, d.quarter + ' 영업이익', formatKoreanCurrency(d.operatingProfit), qoqData[idx].opQoQ);
+        });
+        bar.addEventListener('mousemove', (e) => {
+          tooltip.style.left = (e.clientX + 10) + 'px';
+          tooltip.style.top = (e.clientY - 10) + 'px';
+        });
+        bar.addEventListener('mouseleave', hideTooltip);
+      });
       
       // QoQ 테이블 렌더링 (최근 6분기)
       renderQoQTable(recentData);
@@ -630,7 +853,10 @@ const indexHtml = `<!DOCTYPE html>
     }
 
     async function loadRatios(corpCode) {
-      ['ratioMarketCap', 'ratioDividend', 'ratioPER', 'ratioPBR', 'ratioROE', 'ratioEPS', 'ratio52wHigh', 'ratio52wLow'].forEach(id => document.getElementById(id).textContent = '-');
+      ['ratioMarketCap', 'ratioDividend', 'ratioPER', 'ratioPBR', 'ratioROE', 'ratioEPS', 'ratio52wHigh', 'ratio52wLow', 'ratioOperatingMargin', 'ratioDebtRatio', 'ratioCurrentRatio'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = '-';
+      });
       try {
         const res = await fetch(API_BASE + '/companies/' + corpCode + '/ratios');
         const data = await res.json();
@@ -643,6 +869,11 @@ const indexHtml = `<!DOCTYPE html>
           document.getElementById('ratioEPS').textContent = data.ratios.eps ? data.ratios.eps.toLocaleString() + '원' : '-';
           document.getElementById('ratio52wHigh').textContent = data.ratios.high52w ? data.ratios.high52w.toLocaleString() + '원' : '-';
           document.getElementById('ratio52wLow').textContent = data.ratios.low52w ? data.ratios.low52w.toLocaleString() + '원' : '-';
+          
+          // 새로운 재무비율 (영업이익률, 부채비율, 유동비율)
+          document.getElementById('ratioOperatingMargin').textContent = data.ratios.operatingMargin ? data.ratios.operatingMargin.toFixed(2) + '%' : '-';
+          document.getElementById('ratioDebtRatio').textContent = data.ratios.debtRatio ? data.ratios.debtRatio.toFixed(2) + '%' : '-';
+          document.getElementById('ratioCurrentRatio').textContent = data.ratios.currentRatio ? data.ratios.currentRatio.toFixed(2) + '%' : '-';
         }
       } catch (err) {
         console.error('Ratios error:', err);

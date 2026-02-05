@@ -87,6 +87,21 @@ export interface FinancialRatios {
   evEbitda: number | null;      // EV/EBITDA
 }
 
+// Extended financial ratio models (새로운 재무비율)
+export interface ExtendedFinancialDetails extends FinancialDetails {
+  totalDebt?: number;           // 총부채
+  currentAssets?: number;       // 유동자산
+  currentLiabilities?: number;  // 유동부채
+  operatingProfit?: number;     // 영업이익
+  revenue?: number;             // 매출액
+}
+
+export interface ExtendedFinancialRatios extends FinancialRatios {
+  operatingMargin: number | null;  // 영업이익률 = (영업이익 / 매출액) × 100
+  debtRatio: number | null;        // 부채비율 = (총부채 / 자기자본) × 100
+  currentRatio: number | null;     // 유동비율 = (유동자산 / 유동부채) × 100
+}
+
 // News models
 export interface NewsArticle {
   title: string;

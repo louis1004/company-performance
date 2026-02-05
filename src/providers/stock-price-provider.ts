@@ -19,6 +19,10 @@ export interface StockData {
   eps: number;
   high52w: number;
   low52w: number;
+  // 새로운 재무비율
+  operatingMargin: number;  // 영업이익률
+  debtRatio: number;        // 부채비율
+  currentRatio: number;     // 유동비율
 }
 
 /**
@@ -38,7 +42,7 @@ export async function getStockData(stockCode: string): Promise<StockData> {
     });
     
     if (!response.ok) {
-      return { price: 0, sharesOutstanding: 0 };
+      return { price: 0, sharesOutstanding: 0, dividendYield: 0, per: 0, pbr: 0, roe: 0, eps: 0, high52w: 0, low52w: 0, operatingMargin: 0, debtRatio: 0, currentRatio: 0 };
     }
     
     const html = await response.text();
@@ -51,10 +55,13 @@ export async function getStockData(stockCode: string): Promise<StockData> {
       roe: parseROE(html),
       eps: parseEPS(html),
       high52w: parse52wHigh(html),
-      low52w: parse52wLow(html)
+      low52w: parse52wLow(html),
+      operatingMargin: parseOperatingMargin(html),
+      debtRatio: parseDebtRatio(html),
+      currentRatio: parseCurrentRatio(html)
     };
   } catch (error) {
-    return { price: 0, sharesOutstanding: 0, dividendYield: 0, per: 0, pbr: 0, roe: 0, eps: 0, high52w: 0, low52w: 0 };
+    return { price: 0, sharesOutstanding: 0, dividendYield: 0, per: 0, pbr: 0, roe: 0, eps: 0, high52w: 0, low52w: 0, operatingMargin: 0, debtRatio: 0, currentRatio: 0 };
   }
 }
 
@@ -238,4 +245,56 @@ export async function getStockPriceInfo(stockCode: string): Promise<StockPriceIn
     formattedPrice: formatStockPrice(data.price),
     sharesOutstanding: data.sharesOutstanding
   };
+}
+
+
+/**
+ * Parse Operating Margin (영업이익률) from Naver Finance HTML
+ * 네이버 증권 투자지표 테이블에서 영업이익률 파싱
+ * th_cop_anal11 클래스 사용
+ */
+function parseOperatingMargin(html: string): number {
+  // th_cop_anal11 = 영업이익률
+  // 구조: <th class="...th_cop_anal11">영업이익률</th> ... <td>14.35</td>
+  const pattern = /th_cop_anal11[\s\S]*?<\/th>[\s\S]*?<td[^>]*>[\s\S]*?([-0-9.]+)[\s\S]*?<\/td>/;
+  const match = html.match(pattern);
+  if (match) {
+    return parseFloat(match[1].trim());
+  }
+  
+  return 0;
+}
+
+/**
+ * Parse Debt Ratio (부채비율) from Naver Finance HTML
+ * 네이버 증권 투자지표 테이블에서 부채비율 파싱
+ * th_cop_anal14 클래스 사용
+ */
+function parseDebtRatio(html: string): number {
+  // th_cop_anal14 = 부채비율
+  // 구조: <th class="...th_cop_anal14">부채비율</th> ... <td>26.41</td>
+  const pattern = /th_cop_anal14[\s\S]*?<\/th>[\s\S]*?<td[^>]*>[\s\S]*?([-0-9.]+)[\s\S]*?<\/td>/;
+  const match = html.match(pattern);
+  if (match) {
+    return parseFloat(match[1].trim());
+  }
+  
+  return 0;
+}
+
+/**
+ * Parse Current Ratio (유동비율) from Naver Finance HTML
+ * 네이버 증권에는 유동비율이 없어서 당좌비율(th_cop_anal15)을 사용
+ * 당좌비율 = (당좌자산 / 유동부채) × 100
+ */
+function parseCurrentRatio(html: string): number {
+  // th_cop_anal15 = 당좌비율 (유동비율 대신 사용)
+  // 구조: <th class="...th_cop_anal15">당좌비율</th> ... <td>211.68</td>
+  const pattern = /th_cop_anal15[\s\S]*?<\/th>[\s\S]*?<td[^>]*>[\s\S]*?([-0-9.]+)[\s\S]*?<\/td>/;
+  const match = html.match(pattern);
+  if (match) {
+    return parseFloat(match[1].trim());
+  }
+  
+  return 0;
 }

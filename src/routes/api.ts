@@ -2,12 +2,14 @@
  * API Routes
  * 
  * All API endpoints for the company performance service.
+ * Includes Cache-Control headers and ETag support for optimal caching.
  */
 
 import { Hono } from 'hono';
+import type { Context, Next } from 'hono';
 import type { Env } from '../types';
 import { createDARTClient } from '../clients/dart-client';
-import { createCacheManager, CACHE_TTL, CACHE_KEYS } from '../cache/cache-manager';
+import { createCacheManager, CACHE_TTL, CACHE_KEYS, SWR_CONFIG } from '../cache/cache-manager';
 import { getSearchService } from '../services/search-service';
 import { getLast6Quarters, calculateQoQChanges, processFinancialData } from '../processors/financial-processor';
 import { calculateAllRatios } from '../processors/ratio-calculator';
@@ -16,6 +18,42 @@ import { getCurrentPrice, formatStockPrice, getStockData } from '../providers/st
 import { handleError, ERROR_MESSAGES } from '../utils/error-handler';
 
 const api = new Hono<{ Bindings: Env }>();
+
+/**
+ * ETag 생성 함수
+ */
+function generateETag(data: any): string {
+  const str = JSON.stringify(data);
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return `"${Math.abs(hash).toString(16)}"`;
+}
+
+/**
+ * Cache-Control 헤더 설정 함수
+ */
+function setCacheHeaders(c: Context, maxAge: number, staleWhileRevalidate?: number): void {
+  let cacheControl = `public, max-age=${maxAge}`;
+  if (staleWhileRevalidate) {
+    cacheControl += `, stale-while-revalidate=${staleWhileRevalidate}`;
+  }
+  c.header('Cache-Control', cacheControl);
+}
+
+/**
+ * 조건부 요청 처리 (If-None-Match)
+ */
+function handleConditionalRequest(c: Context, etag: string): boolean {
+  const ifNoneMatch = c.req.header('If-None-Match');
+  if (ifNoneMatch && ifNoneMatch === etag) {
+    return true; // 304 반환 필요
+  }
+  return false;
+}
 
 /**
  * Search endpoint - GET /api/companies/search?q={query}
@@ -44,10 +82,21 @@ api.get('/companies/search', async (c) => {
   
   const companies = searchService.search(query, 10);
   
-  return c.json({
+  const response = {
     companies,
     total: companies.length
-  });
+  };
+  
+  // Cache-Control 및 ETag 설정
+  const etag = generateETag(response);
+  if (handleConditionalRequest(c, etag)) {
+    return c.body(null, 304);
+  }
+  
+  setCacheHeaders(c, 60, 120); // 1분 캐시, 2분 stale-while-revalidate
+  c.header('ETag', etag);
+  
+  return c.json(response);
 });
 
 /**
@@ -63,6 +112,12 @@ api.get('/companies/:corpCode', async (c) => {
     const cached = await cache.get<any>(cacheKey);
     
     if (cached) {
+      const etag = generateETag(cached);
+      if (handleConditionalRequest(c, etag)) {
+        return c.body(null, 304);
+      }
+      setCacheHeaders(c, SWR_CONFIG.COMPANY_INFO.staleTime, SWR_CONFIG.COMPANY_INFO.maxAge);
+      c.header('ETag', etag);
       return c.json(cached);
     }
     
@@ -77,6 +132,11 @@ api.get('/companies/:corpCode', async (c) => {
     };
     
     await cache.set(cacheKey, response, CACHE_TTL.COMPANY_INFO);
+    
+    const etag = generateETag(response);
+    setCacheHeaders(c, SWR_CONFIG.COMPANY_INFO.staleTime, SWR_CONFIG.COMPANY_INFO.maxAge);
+    c.header('ETag', etag);
+    
     return c.json(response);
   } catch (error) {
     const errorResponse = handleError(error);
@@ -97,6 +157,12 @@ api.get('/companies/:corpCode/financial', async (c) => {
     const cached = await cache.get<any>(cacheKey);
     
     if (cached) {
+      const etag = generateETag(cached);
+      if (handleConditionalRequest(c, etag)) {
+        return c.body(null, 304);
+      }
+      setCacheHeaders(c, SWR_CONFIG.FINANCIAL_DATA.staleTime, SWR_CONFIG.FINANCIAL_DATA.maxAge);
+      c.header('ETag', etag);
       return c.json(cached);
     }
 
@@ -156,6 +222,11 @@ api.get('/companies/:corpCode/financial', async (c) => {
     };
     
     await cache.set(cacheKey, response, CACHE_TTL.FINANCIAL_DATA);
+    
+    const etag = generateETag(response);
+    setCacheHeaders(c, SWR_CONFIG.FINANCIAL_DATA.staleTime, SWR_CONFIG.FINANCIAL_DATA.maxAge);
+    c.header('ETag', etag);
+    
     return c.json(response);
   } catch (error) {
     const errorResponse = handleError(error);
@@ -176,12 +247,25 @@ api.get('/companies/:corpCode/ratios', async (c) => {
     
     // 네이버 증권에서 모든 투자 지표 가져오기
     const stockData = await getStockData(companyInfo.stockCode);
-    const { price: stockPrice, sharesOutstanding, dividendYield, per, pbr, roe, eps, high52w, low52w } = stockData;
+    const { 
+      price: stockPrice, 
+      sharesOutstanding, 
+      dividendYield, 
+      per, 
+      pbr, 
+      roe, 
+      eps, 
+      high52w, 
+      low52w,
+      operatingMargin,
+      debtRatio,
+      currentRatio
+    } = stockData;
     
     // 시가총액 계산
     const marketCap = sharesOutstanding > 0 && stockPrice > 0 ? stockPrice * sharesOutstanding : null;
     
-    return c.json({
+    const response = {
       ratios: { 
         per: per > 0 ? per : null, 
         pbr: pbr > 0 ? pbr : null, 
@@ -189,17 +273,30 @@ api.get('/companies/:corpCode/ratios', async (c) => {
         dividendYield: dividendYield > 0 ? dividendYield : null,
         eps: eps > 0 ? eps : null,
         high52w: high52w > 0 ? high52w : null,
-        low52w: low52w > 0 ? low52w : null
+        low52w: low52w > 0 ? low52w : null,
+        // 새로운 재무비율
+        operatingMargin: operatingMargin > 0 ? operatingMargin : null,
+        debtRatio: debtRatio > 0 ? debtRatio : null,
+        currentRatio: currentRatio > 0 ? currentRatio : null
       },
       stockPrice,
       marketCap,
       totalShares: sharesOutstanding,
       calculatedAt: new Date().toISOString()
-    });
+    };
+    
+    const etag = generateETag(response);
+    if (handleConditionalRequest(c, etag)) {
+      return c.body(null, 304);
+    }
+    setCacheHeaders(c, 300, 600); // 5분 캐시, 10분 stale-while-revalidate
+    c.header('ETag', etag);
+    
+    return c.json(response);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return c.json({
-      ratios: { per: null, pbr: null, roe: null, dividendYield: null, eps: null, high52w: null, low52w: null },
+      ratios: { per: null, pbr: null, roe: null, dividendYield: null, eps: null, high52w: null, low52w: null, operatingMargin: null, debtRatio: null, currentRatio: null },
       calculatedAt: new Date().toISOString(),
       message: '재무비율 데이터를 계산할 수 없습니다.',
       error: errorMessage
@@ -220,6 +317,12 @@ api.get('/companies/:corpCode/disclosures', async (c) => {
     const cached = await cache.get<any>(cacheKey);
     
     if (cached) {
+      const etag = generateETag(cached);
+      if (handleConditionalRequest(c, etag)) {
+        return c.body(null, 304);
+      }
+      setCacheHeaders(c, SWR_CONFIG.DISCLOSURES.staleTime, SWR_CONFIG.DISCLOSURES.maxAge);
+      c.header('ETag', etag);
       return c.json(cached);
     }
     
@@ -237,6 +340,11 @@ api.get('/companies/:corpCode/disclosures', async (c) => {
     };
     
     await cache.set(cacheKey, response, CACHE_TTL.DISCLOSURES);
+    
+    const etag = generateETag(response);
+    setCacheHeaders(c, SWR_CONFIG.DISCLOSURES.staleTime, SWR_CONFIG.DISCLOSURES.maxAge);
+    c.header('ETag', etag);
+    
     return c.json(response);
   } catch (error) {
     const errorResponse = handleError(error);
@@ -257,6 +365,12 @@ api.get('/companies/:corpCode/news', async (c) => {
     const cached = await cache.get<any>(cacheKey);
     
     if (cached) {
+      const etag = generateETag(cached);
+      if (handleConditionalRequest(c, etag)) {
+        return c.body(null, 304);
+      }
+      setCacheHeaders(c, SWR_CONFIG.NEWS.staleTime, SWR_CONFIG.NEWS.maxAge);
+      c.header('ETag', etag);
       return c.json(cached);
     }
     
@@ -270,6 +384,11 @@ api.get('/companies/:corpCode/news', async (c) => {
     };
     
     await cache.set(cacheKey, response, CACHE_TTL.NEWS);
+    
+    const etag = generateETag(response);
+    setCacheHeaders(c, SWR_CONFIG.NEWS.staleTime, SWR_CONFIG.NEWS.maxAge);
+    c.header('ETag', etag);
+    
     return c.json(response);
   } catch (error) {
     const errorResponse = handleError(error);
